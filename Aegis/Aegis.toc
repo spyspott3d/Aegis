@@ -10,7 +10,7 @@
 
 Core\Util.lua
 Core\Config.lua
-Core\ConfigPanel.lua
+Core\Settings.lua
 UI\Theme.lua
 Widgets\Widget.lua
 Widgets\_ResourceBarBase.lua

@@ -42,10 +42,9 @@ read_globals = {
     "GetScreenHeight", "InCombatLockdown", "IsAddOnLoaded", "LoadAddOn",
     "GetAddOnMetadata", "EnableAddOn", "DisableAddOn",
     "_G",
-    -- Interface Options (config panel registration)
-    "InterfaceOptions_AddCategory", "InterfaceOptionsFrame_OpenToCategory",
-    "InterfaceOptionsFrame",
-    -- UIDropDownMenu helpers (used by the config panel)
+    -- Settings frame (escape-closeable via this list)
+    "UISpecialFrames",
+    -- UIDropDownMenu helpers (used by the settings panel)
     "UIDropDownMenu_SetWidth", "UIDropDownMenu_Initialize",
     "UIDropDownMenu_CreateInfo", "UIDropDownMenu_AddButton",
     "UIDropDownMenu_SetSelectedValue", "UIDropDownMenu_SetText",

@@ -185,7 +185,7 @@ local sub = {}
 
 sub.help = function()
     print(colorize("Aegis", "1ED760") .. " commands:")
-    print("  /ae                          - open the config panel")
+    print("  /ae                          - toggle the settings window")
     print("  /ae lock                     - lock all blocks in place")
     print("  /ae unlock                   - unlock all blocks for dragging")
     print("  /ae reset                    - reset blocks to default layout (asks to confirm)")
@@ -274,10 +274,10 @@ end
 local function dispatch(msg)
     msg = strtrim((msg or ""):lower())
     if msg == "" then
-        -- /ae alone opens the config panel (per SPEC). Falls back to help
-        -- if the panel module is not loaded.
-        if ns.ConfigPanel and ns.ConfigPanel.Open then
-            ns.ConfigPanel.Open()
+        -- /ae alone opens the settings panel. Falls back to text help if
+        -- the settings module is somehow not loaded.
+        if ns.Settings and ns.Settings.Toggle then
+            ns.Settings.Toggle()
         else
             sub.help()
         end
