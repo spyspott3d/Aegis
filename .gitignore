@@ -1,0 +1,28 @@
+# Build artifacts
+Aegis.zip
+Aegis-*.zip
+
+# Local handoff docs (kept out of the public repo)
+CLAUDE.md
+ARCHITECTURE.md
+ROADMAP.md
+API_REFERENCE.md
+SPEC_*.md
+NOTES.md
+
+# IDE
+.vscode/
+.idea/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+
+# Editor backups
+*.bak
+*~

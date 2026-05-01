@@ -1,0 +1,79 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version from tag
+        id: version
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify .toc version matches tag
+        run: |
+          TOC_VERSION=$(grep "^## Version:" Aegis/Aegis.toc | awk '{print $3}')
+          if [ "${TOC_VERSION}" != "${{ steps.version.outputs.version }}" ]; then
+            echo "Version mismatch: Aegis.toc says ${TOC_VERSION}, tag says ${{ steps.version.outputs.version }}"
+            exit 1
+          fi
+
+      - name: Build release zip
+        run: |
+          chmod +x package.sh
+          ./package.sh
+
+      - name: Locate zip
+        id: zip
+        run: |
+          ZIP="Aegis.zip"
+          if [ ! -f "${ZIP}" ]; then
+            echo "Expected ${ZIP} but it was not produced by package.sh"
+            exit 1
+          fi
+          echo "path=${ZIP}" >> "$GITHUB_OUTPUT"
+          echo "name=${ZIP}" >> "$GITHUB_OUTPUT"
+
+      - name: Generate release notes
+        run: |
+          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^${{ steps.version.outputs.tag }}$" | grep '^v' | head -n 1 || true)
+          if [ -z "${PREV_TAG}" ]; then
+            echo "First v-tag release. Including all commits."
+            git log --pretty=format:"- %s (%h)" > release-notes.md
+          else
+            echo "Changes since ${PREV_TAG}:"
+            git log "${PREV_TAG}..${{ steps.version.outputs.tag }}" --pretty=format:"- %s (%h)" > release-notes.md
+          fi
+          echo "" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "## Install" >> release-notes.md
+          echo "" >> release-notes.md
+          echo "1. Download \`Aegis.zip\` below." >> release-notes.md
+          echo "2. Extract into \`Interface/AddOns/\` so you have \`Interface/AddOns/Aegis/Aegis.toc\`." >> release-notes.md
+          echo "3. Restart the WoW client or \`/console reloadui\`." >> release-notes.md
+          echo "4. Type \`/ae about\` to confirm the addon is loaded." >> release-notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Aegis ${{ steps.version.outputs.version }}
+          body_path: release-notes.md
+          files: ${{ steps.zip.outputs.path }}
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}

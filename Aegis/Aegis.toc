@@ -1,0 +1,11 @@
+## Interface: 30300
+## Title: Aegis
+## Notes: HUD with vital signs, combo points, and incoming pressure tracking
+## Version: 0.1.0
+## Author: SpySpoTt3d
+## SavedVariables: AegisDB
+## SavedVariablesPerCharacter: AegisDBChar
+## X-Website: https://github.com/spyspott3d/Aegis
+## X-License: MIT
+
+Core\Aegis.lua
