@@ -344,6 +344,11 @@ function HealthBar.Build(parent, orientation, style)
         applyHaloState(self.halo, state)
         applyTTDText(self, state, ttd)
         maybePlayCriticalSound(self, state)
+        -- Belt-and-suspenders: re-poll UnitGetIncomingHeals on every
+        -- pressure tick. UNIT_HEAL_PREDICTION is the primary trigger but
+        -- on Ascension it does not always fire on heal start/end, so the
+        -- segment can go stale. 0.25s max staleness from this poll.
+        refreshIncomingHeal(self)
         self._lastState = state
     end
 
