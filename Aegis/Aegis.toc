@@ -13,4 +13,6 @@ Core\Config.lua
 UI\Theme.lua
 UI\Anchor.lua
 Modules\HealthBar.lua
+Modules\ResourceBar.lua
+Modules\ComboPoints.lua
 Core\Init.lua

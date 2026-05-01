@@ -109,11 +109,20 @@ lifecycle:SetScript("OnEvent", function(self, event, arg1)
             ns.Config.Initialize()
         end
     elseif event == "PLAYER_LOGIN" then
+        -- Cache class once. Per CLAUDE.md, repeated UnitClass calls in hot
+        -- paths are wasteful; class never changes for a character.
+        ns.playerClass = select(2, UnitClass("player"))
         if ns.Anchor and ns.Anchor.Build then
             ns.Anchor.Build()
         end
         if ns.HealthBar and ns.HealthBar.Build then
             ns.HealthBar.Build()
+        end
+        if ns.ResourceBar and ns.ResourceBar.Build then
+            ns.ResourceBar.Build()
+        end
+        if ns.ComboPoints and ns.ComboPoints.Build then
+            ns.ComboPoints.Build()
         end
         print(("%s v%s loaded. Type /ae for commands."):format(
             colorize(addonName, "1ED760"), ns.version))
