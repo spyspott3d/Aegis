@@ -21,4 +21,5 @@ Widgets\RunicBar.lua
 Widgets\ComboPoints.lua
 Blocks\Block.lua
 UI\BlockManager.lua
+Modules\Pressure.lua
 Core\Init.lua

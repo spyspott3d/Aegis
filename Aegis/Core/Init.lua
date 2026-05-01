@@ -61,8 +61,8 @@ sub.help = function()
     print("  /ae reset     - reset blocks to default layout (asks to confirm)")
     print("  /ae about     - show version info")
     print("  /ae help      - show this list")
-    print("  /ae pressure  - (not yet implemented)")
-    print("  /ae debug     - (not yet implemented)")
+    print("  /ae pressure  - show pressure config (window, thresholds, etc.)")
+    print("  /ae debug pressure [on|off]  - toggle pressure debug print")
 end
 
 sub.lock = function()
@@ -85,11 +85,41 @@ sub.about = function()
 end
 
 sub.pressure = function()
-    aprint("pressure settings not yet implemented.")
+    -- Read-only summary until the Phase 5 config panel exists. Users can
+    -- tune values via /run AegisDB.pressure.<field> = N for now.
+    local p = (AegisDB and AegisDB.pressure) or {}
+    local th = p.thresholds or {}
+    print(colorize("Aegis", "1ED760") .. " pressure config:")
+    print(("  window: %ss"):format(p.windowSeconds or 4))
+    print(("  thresholds: warning=%ss, critical=%ss"):format(
+        th.warning or 10, th.critical or 5))
+    print(("  hysteresis: %ss"):format(p.hysteresisSeconds or 0.5))
+    print(("  sound on critical: %s"):format(tostring(p.soundOnCritical or false)))
+    print("  (full config panel ships in Phase 5)")
 end
 
-sub.debug = function()
-    aprint("debug not yet implemented.")
+sub.debug = function(rest)
+    rest = rest or ""
+    -- /ae debug pressure on|off|toggle
+    local target, arg = rest:match("^(%S+)%s*(.*)$")
+    if target == "pressure" then
+        if not ns.Pressure then
+            aprint("pressure module not loaded.")
+            return
+        end
+        if arg == "on" then
+            ns.Pressure.debug = true
+            aprint("pressure debug on (printing every 1s).")
+        elseif arg == "off" then
+            ns.Pressure.debug = false
+            aprint("pressure debug off.")
+        else
+            ns.Pressure.debug = not ns.Pressure.debug
+            aprint("pressure debug " .. (ns.Pressure.debug and "on" or "off") .. ".")
+        end
+    else
+        aprint("usage: /ae debug pressure [on|off]")
+    end
 end
 
 local function dispatch(msg)
