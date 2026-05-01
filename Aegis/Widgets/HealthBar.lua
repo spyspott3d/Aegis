@@ -54,10 +54,11 @@ local function readFormat()
 end
 
 local function formatHP(cur, max)
+    local fmt = readFormat()
+    if fmt == "none" then return "" end
     if not cur or cur < 0 then cur = 0 end
     if not max or max < 1 then max = 1 end
     local pct = math.floor((cur / max) * 100 + 0.5)
-    local fmt = readFormat()
     if fmt == "value" then
         return tostring(cur)
     elseif fmt == "percent" then
@@ -299,6 +300,10 @@ function HealthBar.Build(parent, orientation, style)
     seg:SetVertexColor(hi[1], hi[2], hi[3], hi[4])
     seg:Hide()
     frame.healSegment = seg
+
+    if style == "glossy" and Theme.ApplyGlossy then
+        Theme.ApplyGlossy(frame)
+    end
 
     buildBorder(frame, Theme.colors.border)
 

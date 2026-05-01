@@ -1,7 +1,7 @@
 ## Interface: 30300
 ## Title: Aegis
 ## Notes: HUD with vital signs, combo points, and incoming pressure tracking
-## Version: 0.1.0
+## Version: 1.0.0
 ## Author: SpySpoTt3d
 ## SavedVariables: AegisDB
 ## SavedVariablesPerCharacter: AegisDBChar
@@ -10,6 +10,7 @@
 
 Core\Util.lua
 Core\Config.lua
+Core\ConfigPanel.lua
 UI\Theme.lua
 Widgets\Widget.lua
 Widgets\_ResourceBarBase.lua

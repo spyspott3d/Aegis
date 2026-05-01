@@ -49,6 +49,135 @@ StaticPopupDialogs["AEGIS_RESET_CONFIRM"] = {
 }
 
 ----------------------------------------------------------------
+-- Block subcommand helpers
+----------------------------------------------------------------
+
+local function catalogIds()
+    local ids = {}
+    if ns.WidgetCatalog then
+        for k in pairs(ns.WidgetCatalog) do
+            tinsert(ids, k)
+        end
+        table.sort(ids)
+    end
+    return ids
+end
+
+local function generateBlockId()
+    local used = {}
+    if AegisDBChar.blocks then
+        for _, b in ipairs(AegisDBChar.blocks) do
+            if b.id then used[b.id] = true end
+        end
+    end
+    local i = 1
+    while used["block" .. i] do i = i + 1 end
+    return "block" .. i
+end
+
+local function listBlocks()
+    local blocks = AegisDBChar and AegisDBChar.blocks
+    if not blocks or #blocks == 0 then
+        aprint("no blocks. Try /ae reset to install defaults.")
+        return
+    end
+    print(colorize("Aegis", "1ED760") .. " blocks:")
+    for i, b in ipairs(blocks) do
+        local p = b.position or {}
+        local pos = ("%s%+d,%+d"):format(
+            p.point or "?", p.xOffset or 0, p.yOffset or 0)
+        local wlist = (b.widgets and #b.widgets > 0)
+            and table.concat(b.widgets, ",") or "(empty)"
+        print(("  [%d] id=%s pos=%s orient=%s style=%s widgets=%s"):format(
+            i,
+            b.id or "?",
+            pos,
+            b.orientation or "horizontal",
+            b.style or "standard",
+            wlist))
+    end
+end
+
+local function addBlock(args)
+    args = args or ""
+    local orientation, rest = args:match("^(%S+)%s*(.*)$")
+    if not orientation then
+        aprint("usage: /ae block add <horizontal|vertical> <widget1> [widget2] ...")
+        return
+    end
+    if orientation == "h" then orientation = "horizontal" end
+    if orientation == "v" then orientation = "vertical" end
+    if orientation ~= "horizontal" and orientation ~= "vertical" then
+        aprint("orientation must be horizontal or vertical (h | v).")
+        return
+    end
+    local widgets = {}
+    for w in (rest or ""):gmatch("(%S+)") do
+        if not (ns.WidgetCatalog and ns.WidgetCatalog[w]) then
+            aprint(("unknown widget '%s'. /ae block help for the catalog."):format(w))
+            return
+        end
+        tinsert(widgets, w)
+    end
+    if #widgets == 0 then
+        aprint("at least one widget id is required.")
+        return
+    end
+    local newBlock = {
+        id          = generateBlockId(),
+        position    = {
+            point         = "CENTER",
+            relativePoint = "CENTER",
+            xOffset       = 0,
+            yOffset       = 0,
+        },
+        orientation = orientation,
+        style       = (AegisDB.visual and AegisDB.visual.defaultBlockStyle) or "standard",
+        scale       = 1.0,
+        widgets     = widgets,
+    }
+    AegisDBChar.blocks = AegisDBChar.blocks or {}
+    tinsert(AegisDBChar.blocks, newBlock)
+    if ns.BlockManager and ns.BlockManager.Build then
+        ns.BlockManager.Build()
+    end
+    aprint(("block '%s' added (%s, %d widgets) at screen center."):format(
+        newBlock.id, orientation, #widgets))
+end
+
+local function removeBlock(id)
+    id = strtrim(id or "")
+    if id == "" then
+        aprint("usage: /ae block remove <id> (see /ae block list)")
+        return
+    end
+    local blocks = AegisDBChar and AegisDBChar.blocks
+    if not blocks then
+        aprint("no blocks.")
+        return
+    end
+    for i, b in ipairs(blocks) do
+        if b.id == id then
+            tremove(blocks, i)
+            if ns.BlockManager and ns.BlockManager.Build then
+                ns.BlockManager.Build()
+            end
+            aprint(("block '%s' removed."):format(id))
+            return
+        end
+    end
+    aprint(("block '%s' not found. /ae block list."):format(id))
+end
+
+local function blockHelp()
+    print(colorize("Aegis", "1ED760") .. " block commands:")
+    print("  /ae block list                                 - list all blocks")
+    print("  /ae block add <h|v> <widget1> [widget2] ...    - create a block at screen center")
+    print("  /ae block remove <id>                          - delete a block by id")
+    print("  Available widgets: " .. table.concat(catalogIds(), ", "))
+end
+
+----------------------------------------------------------------
 -- Slash command dispatch
 ----------------------------------------------------------------
 
@@ -56,13 +185,15 @@ local sub = {}
 
 sub.help = function()
     print(colorize("Aegis", "1ED760") .. " commands:")
-    print("  /ae lock      - lock all blocks in place")
-    print("  /ae unlock    - unlock all blocks for dragging")
-    print("  /ae reset     - reset blocks to default layout (asks to confirm)")
-    print("  /ae about     - show version info")
-    print("  /ae help      - show this list")
-    print("  /ae pressure  - show pressure config (window, thresholds, etc.)")
+    print("  /ae                          - open the config panel")
+    print("  /ae lock                     - lock all blocks in place")
+    print("  /ae unlock                   - unlock all blocks for dragging")
+    print("  /ae reset                    - reset blocks to default layout (asks to confirm)")
+    print("  /ae block ...                - manage blocks (see /ae block help)")
+    print("  /ae pressure                 - show pressure config")
     print("  /ae debug pressure [on|off]  - toggle pressure debug print")
+    print("  /ae about                    - show version info")
+    print("  /ae help                     - show this list")
 end
 
 sub.lock = function()
@@ -85,17 +216,35 @@ sub.about = function()
 end
 
 sub.pressure = function()
-    -- Read-only summary until the Phase 5 config panel exists. Users can
-    -- tune values via /run AegisDB.pressure.<field> = N for now.
     local p = (AegisDB and AegisDB.pressure) or {}
     local th = p.thresholds or {}
     print(colorize("Aegis", "1ED760") .. " pressure config:")
     print(("  window: %ss"):format(p.windowSeconds or 4))
-    print(("  thresholds: warning=%ss, critical=%ss"):format(
-        th.warning or 10, th.critical or 5))
-    print(("  hysteresis: %ss"):format(p.hysteresisSeconds or 0.5))
+    print(("  TTD thresholds: warning=%ss, critical=%ss"):format(
+        th.warningTTD or 10, th.criticalTTD or 5))
+    print(("  drain thresholds: warning=%.2f%%/s, critical=%.2f%%/s"):format(
+        (th.warningDrain or 0.01) * 100, (th.criticalDrain or 0.03) * 100))
+    print(("  hysteresis: %ss (healing sustain: %ss)"):format(
+        p.hysteresisSeconds or 0.5, p.healingSustainTime or 1.5))
     print(("  sound on critical: %s"):format(tostring(p.soundOnCritical or false)))
-    print("  (full config panel ships in Phase 5)")
+    print("  (use the config panel to tune; /ae)")
+end
+
+sub.block = function(rest)
+    rest = rest or ""
+    local action, args = rest:match("^(%S+)%s*(.*)$")
+    action = action or ""
+    if action == "" or action == "help" then
+        blockHelp()
+    elseif action == "list" then
+        listBlocks()
+    elseif action == "add" then
+        addBlock(args)
+    elseif action == "remove" or action == "rm" or action == "delete" then
+        removeBlock(args)
+    else
+        aprint(("unknown /ae block subcommand '%s'. /ae block help."):format(action))
+    end
 end
 
 sub.debug = function(rest)
@@ -125,7 +274,13 @@ end
 local function dispatch(msg)
     msg = strtrim((msg or ""):lower())
     if msg == "" then
-        sub.help()
+        -- /ae alone opens the config panel (per SPEC). Falls back to help
+        -- if the panel module is not loaded.
+        if ns.ConfigPanel and ns.ConfigPanel.Open then
+            ns.ConfigPanel.Open()
+        else
+            sub.help()
+        end
         return
     end
     local cmd, rest = msg:match("^(%S+)%s*(.*)$")

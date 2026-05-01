@@ -51,3 +51,35 @@ Theme.chatHex = {
     pressureWarn = "FFAA00",
     pressureCrit = "FF2020",
 }
+
+-- Apply a "glossy" overlay to a StatusBar frame: a top-half white
+-- gradient (highlight) and a bottom-half black gradient (shadow), both
+-- at low alpha. Stock WoW StatusBars do not support real curvature; this
+-- gradient pair is the conventional approximation. Called by widgets
+-- whose hosting block has style == "glossy".
+function Theme.ApplyGlossy(frame)
+    if not frame or not frame.GetWidth then return end
+    local tex = Theme.statusBarTexture
+
+    -- Top half: transparent at the middle, white at the top. Vertical
+    -- gradient in 3.3.5a goes (min = bottom, max = top), so min is
+    -- middle (alpha 0) and max is top (alpha 0.30).
+    local hi = frame:CreateTexture(nil, "ARTWORK", nil, 7)
+    hi:SetTexture(tex)
+    hi:SetPoint("TOPLEFT",  frame, "TOPLEFT",  0, 0)
+    hi:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, 0)
+    hi:SetPoint("BOTTOM",   frame, "CENTER",   0, 0)
+    hi:SetGradientAlpha("VERTICAL",
+        1, 1, 1, 0.00,   -- bottom of upper half: transparent
+        1, 1, 1, 0.30)   -- top:                 white tint
+
+    -- Bottom half: black at the bottom, transparent at the middle.
+    local sh = frame:CreateTexture(nil, "ARTWORK", nil, 7)
+    sh:SetTexture(tex)
+    sh:SetPoint("BOTTOMLEFT",  frame, "BOTTOMLEFT",  0, 0)
+    sh:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
+    sh:SetPoint("TOP",         frame, "CENTER",      0, 0)
+    sh:SetGradientAlpha("VERTICAL",
+        0, 0, 0, 0.30,   -- bottom: black shadow
+        0, 0, 0, 0.00)   -- middle: transparent
+end

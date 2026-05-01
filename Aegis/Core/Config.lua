@@ -34,7 +34,10 @@ local accountDefaults = {
     visual = {
         scale = 1.0,
         outOfCombatAlpha = 0.3,
+        -- value | percent | value_and_percent | none
         showHealthText = "value_and_percent",
+        -- Show "current / max" text on resource bars (mana/rage/energy/runic).
+        showResourceText = true,
         font = "Friz Quadrata TT",
         defaultBlockStyle = "standard", -- standard | glossy
         -- Pressure halo around the health widget shows only while in

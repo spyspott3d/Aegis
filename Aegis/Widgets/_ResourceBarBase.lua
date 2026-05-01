@@ -81,7 +81,10 @@ function Base.MakeWidget(config)
         frame:SetMinMaxValues(0, math.max(1, max))
         frame:SetValue(cur)
         if frame.text then
-            if max <= 0 then
+            local v = AegisDB and AegisDB.visual
+            if v and v.showResourceText == false then
+                frame.text:SetText("")
+            elseif max <= 0 then
                 frame.text:SetText("0")
             else
                 frame.text:SetText(cur .. " / " .. max)
@@ -120,6 +123,10 @@ function Base.MakeWidget(config)
         bg:SetAllPoints(frame)
         local bgC = Theme.colors.bgDark
         bg:SetVertexColor(bgC[1], bgC[2], bgC[3], bgC[4])
+
+        if style == "glossy" and Theme.ApplyGlossy then
+            Theme.ApplyGlossy(frame)
+        end
 
         buildBorder(frame, Theme.colors.border)
 
