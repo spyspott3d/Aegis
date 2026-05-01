@@ -10,10 +10,11 @@
 local _, ns = ...
 
 local widget = ns.ResourceBarBase.MakeWidget({
-    powerType = 3,
-    colorKey  = "energy",
+    powerType   = 3,
+    colorKey    = "energy",
+    showTextKey = "showEnergyText",
     pollInterval = 0.1,
-    events    = {
+    events      = {
         "UNIT_ENERGY",
         "UNIT_MAXENERGY",
         "UNIT_DISPLAYPOWER",

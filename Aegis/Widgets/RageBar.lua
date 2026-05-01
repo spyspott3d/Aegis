@@ -4,9 +4,10 @@
 local _, ns = ...
 
 local widget = ns.ResourceBarBase.MakeWidget({
-    powerType = 1,
-    colorKey  = "rage",
-    events    = {
+    powerType   = 1,
+    colorKey    = "rage",
+    showTextKey = "showRageText",
+    events      = {
         "UNIT_RAGE",
         "UNIT_MAXRAGE",
         "UNIT_DISPLAYPOWER",

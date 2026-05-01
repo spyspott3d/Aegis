@@ -6,9 +6,10 @@
 local _, ns = ...
 
 local widget = ns.ResourceBarBase.MakeWidget({
-    powerType = 6,
-    colorKey  = "runic",
-    events    = {
+    powerType   = 6,
+    colorKey    = "runic",
+    showTextKey = "showRunicText",
+    events      = {
         "UNIT_RUNIC_POWER",
         "UNIT_MAXRUNIC_POWER",
         "UNIT_DISPLAYPOWER",

@@ -7,11 +7,12 @@
 --
 --   local ns = select(2, ...)
 --   local widget = ns.ResourceBarBase.MakeWidget({
---       powerType = 0,                              -- WoW power index
---       colorKey  = "mana",                         -- key into Theme.colors
---       events    = { "UNIT_MANA", "UNIT_MAXMANA",  -- events to register
---                     "UNIT_DISPLAYPOWER",
---                     "PLAYER_ENTERING_WORLD" },
+--       powerType    = 0,                              -- WoW power index
+--       colorKey     = "mana",                         -- key into Theme.colors
+--       showTextKey  = "showManaText",                 -- key into AegisDB.visual
+--       events       = { "UNIT_MANA", "UNIT_MAXMANA",  -- events to register
+--                        "UNIT_DISPLAYPOWER",
+--                        "PLAYER_ENTERING_WORLD" },
 --       -- Optional: if set, the widget polls UnitPower at this cadence in
 --       -- addition to event-driven refreshes. Carve-out from CLAUDE.md
 --       -- hard rule #3 ("no OnUpdate on resource bars"). The rule is
@@ -74,6 +75,16 @@ function Base.MakeWidget(config)
         return 150, 14
     end
 
+    local function showText()
+        local v = AegisDB and AegisDB.visual
+        if not v then return true end
+        local key = config.showTextKey
+        if not key then return true end
+        local val = v[key]
+        if val == nil then return true end
+        return val ~= false
+    end
+
     local function refresh(frame)
         if not frame then return end
         local cur = UnitPower("player", config.powerType) or 0
@@ -81,8 +92,7 @@ function Base.MakeWidget(config)
         frame:SetMinMaxValues(0, math.max(1, max))
         frame:SetValue(cur)
         if frame.text then
-            local v = AegisDB and AegisDB.visual
-            if v and v.showResourceText == false then
+            if not showText() then
                 frame.text:SetText("")
             elseif max <= 0 then
                 frame.text:SetText("0")

@@ -7,10 +7,10 @@ local _, ns = ...
 ns.Config = ns.Config or {}
 local Config = ns.Config
 
-Config.SCHEMA_VERSION = 3
+Config.SCHEMA_VERSION = 4
 
 local accountDefaults = {
-    version = 3,
+    version = 4,
     pressure = {
         windowSeconds = 4,
         thresholds = {
@@ -36,8 +36,17 @@ local accountDefaults = {
         outOfCombatAlpha = 0.3,
         -- value | percent | value_and_percent | none
         showHealthText = "value_and_percent",
-        -- Show "current / max" text on resource bars (mana/rage/energy/runic).
-        showResourceText = true,
+        -- Per-bar "current / max" toggles. Each resource bar reads its own
+        -- key so the user can hide text on, say, the rage bar while keeping
+        -- it on the mana bar. The legacy showResourceText (v3) was a single
+        -- global toggle — migrated v3 -> v4 onto these fields.
+        showManaText  = true,
+        showRageText  = true,
+        showEnergyText = true,
+        showRunicText = true,
+        -- Combo points: render the integer count as a small label next to
+        -- the filled pips, in addition to the pips themselves.
+        showComboCount = false,
         font = "Friz Quadrata TT",
         defaultBlockStyle = "standard", -- standard | glossy
         -- Pressure halo around the health widget shows only while in
@@ -81,7 +90,7 @@ local defaultBlocks = {
 }
 
 local charDefaults = {
-    version = 3,
+    version = 4,
     locked = true,
     -- `blocks` is NOT applied via applyDefaults. It is seeded once if missing
     -- (see installBlocksIfMissing). applyDefaults is for key-value fills and
@@ -140,6 +149,21 @@ local accountMigrations = {
         end
         db.version = 3
     end,
+    [4] = function(db)
+        -- v3 -> v4: replace the global showResourceText with per-bar toggles.
+        if db.visual then
+            local v = db.visual.showResourceText
+            if v ~= nil then
+                local on = (v ~= false)
+                db.visual.showManaText   = on
+                db.visual.showRageText   = on
+                db.visual.showEnergyText = on
+                db.visual.showRunicText  = on
+                db.visual.showResourceText = nil
+            end
+        end
+        db.version = 4
+    end,
 }
 
 local charMigrations = {
@@ -156,6 +180,10 @@ local charMigrations = {
     [3] = function(db)
         -- v2 -> v3: no per-character changes; bump only.
         db.version = 3
+    end,
+    [4] = function(db)
+        -- v3 -> v4: no per-character changes; bump only.
+        db.version = 4
     end,
 }
 

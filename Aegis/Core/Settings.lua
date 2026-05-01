@@ -1,18 +1,21 @@
 -- Aegis/Core/Settings.lua
 -- Standalone settings dialog. Modeled on the Iron addon's Settings.lua:
 -- a movable frame with dialog-style backdrop, tabs along the top, and a
--- content area that swaps per tab. Tab definitions are register-driven so
--- adding new tabs in the future is a single ns.Settings.RegisterTab call.
+-- content area that swaps per tab.
+--
+-- Three tabs:
+--   Pressure - thresholds (TTD ladders, drain ladders, hysteresis,
+--              healing sustain) and the critical-entry sound toggle.
+--   Visual   - per-bar text toggles (mana, rage, energy, runic), HP
+--              format dropdown, combo count overlay, halo OOC gating,
+--              default block style.
+--   Blocks   - row list of installed blocks (one row per block, with
+--              its id, position, orientation/style, widget list, and a
+--              Delete button), plus Add/Reset action buttons.
 --
 -- The dialog is parented to UIParent (not registered with the Blizzard
--- Interface Options framework) for two reasons: full layout control, and
--- because the Interface Options framework on 3.3.5a has quirks that make
--- per-frame layouts annoying. Escape closes via UISpecialFrames.
---
--- Settings apply live: control handlers write to AegisDB on change. The
--- consumers read the values on the next tick / refresh, so most changes
--- take effect immediately. A few (default block style for new blocks)
--- only apply on the next /ae block add.
+-- Interface Options framework) for full layout control. Escape closes
+-- via UISpecialFrames.
 
 local _, ns = ...
 ns.Settings = ns.Settings or {}
@@ -48,7 +51,7 @@ function S.RegisterTab(def)
 end
 
 ----------------------------------------------------------------
--- Builder helpers (sliders, checkboxes, dropdowns, buttons)
+-- Builder helpers
 ----------------------------------------------------------------
 
 local function uniqName(base)
@@ -116,7 +119,7 @@ end
 
 local function makeDropdown(parent, label, options, getter, setter)
     local container = CreateFrame("Frame", nil, parent)
-    container:SetSize(200, 50)
+    container:SetSize(220, 50)
 
     local labelFS = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     labelFS:SetPoint("TOPLEFT", container, "TOPLEFT", 18, 0)
@@ -125,7 +128,7 @@ local function makeDropdown(parent, label, options, getter, setter)
     local name = uniqName("Drop")
     local dd = CreateFrame("Frame", name, container, "UIDropDownMenuTemplate")
     dd:SetPoint("TOPLEFT", labelFS, "BOTTOMLEFT", -16, -2)
-    UIDropDownMenu_SetWidth(dd, 160)
+    UIDropDownMenu_SetWidth(dd, 180)
 
     local function applySelection(key)
         UIDropDownMenu_SetSelectedValue(dd, key)
@@ -202,7 +205,7 @@ local TAB_PADDING    = 24
 local TAB_MIN_WIDTH  = 60
 local TAB_GAP        = 4
 local FRAME_SIDE_MARGIN = 12
-local FRAME_MIN_WIDTH   = 460
+local FRAME_MIN_WIDTH   = 480
 
 local function buildTabs(f)
     if f.tabButtons then
@@ -264,7 +267,7 @@ local function createFrame()
     if S.frame then return S.frame end
 
     local f = CreateFrame("Frame", SETTINGS_FRAME_NAME, UIParent)
-    f:SetSize(FRAME_MIN_WIDTH, 460)
+    f:SetSize(FRAME_MIN_WIDTH, 480)
     f:SetPoint("CENTER")
     f:SetMovable(true)
     f:EnableMouse(true)
@@ -306,7 +309,7 @@ local function createFrame()
 end
 
 ----------------------------------------------------------------
--- Tab builders
+-- Pressure tab
 ----------------------------------------------------------------
 
 local function pressure()   return AegisDB.pressure              end
@@ -366,12 +369,16 @@ local function buildPressureTab(parent)
     cbSound:SetPoint("TOPLEFT", s7, "BOTTOMLEFT", -4, -16)
 end
 
+----------------------------------------------------------------
+-- Visual tab — per-bar settings
+----------------------------------------------------------------
+
 local function buildVisualTab(parent)
     local hdr = makeHeader(parent, "Visual")
     hdr:SetPoint("TOPLEFT", parent, "TOPLEFT", 8, -4)
 
     local healthFmt = makeDropdown(parent,
-        "Health text format",
+        "Health bar text",
         {
             { key = "value",             text = "Value (1234)"        },
             { key = "percent",           text = "Percent (47%)"       },
@@ -382,17 +389,35 @@ local function buildVisualTab(parent)
         function(v) visual().showHealthText = v end)
     healthFmt:SetPoint("TOPLEFT", hdr, "BOTTOMLEFT", 0, -8)
 
-    local cbResource = makeCheckbox(parent,
-        "Show 'current / max' on resource bars",
-        function() return visual().showResourceText ~= false end,
-        function(v) visual().showResourceText = v end)
-    cbResource:SetPoint("TOPLEFT", healthFmt, "BOTTOMLEFT", 18, -4)
+    local cbMana = makeCheckbox(parent, "Show 'current / max' on mana bar",
+        function() return visual().showManaText ~= false end,
+        function(v) visual().showManaText = v end)
+    cbMana:SetPoint("TOPLEFT", healthFmt, "BOTTOMLEFT", 18, -4)
 
-    local cbHaloOOC = makeCheckbox(parent,
-        "Hide pressure halo out of combat",
+    local cbRage = makeCheckbox(parent, "Show 'current / max' on rage bar",
+        function() return visual().showRageText ~= false end,
+        function(v) visual().showRageText = v end)
+    cbRage:SetPoint("TOPLEFT", cbMana, "BOTTOMLEFT", 0, -2)
+
+    local cbEnergy = makeCheckbox(parent, "Show 'current / max' on energy bar",
+        function() return visual().showEnergyText ~= false end,
+        function(v) visual().showEnergyText = v end)
+    cbEnergy:SetPoint("TOPLEFT", cbRage, "BOTTOMLEFT", 0, -2)
+
+    local cbRunic = makeCheckbox(parent, "Show 'current / max' on runic bar",
+        function() return visual().showRunicText ~= false end,
+        function(v) visual().showRunicText = v end)
+    cbRunic:SetPoint("TOPLEFT", cbEnergy, "BOTTOMLEFT", 0, -2)
+
+    local cbCombo = makeCheckbox(parent, "Show combo point count next to pips",
+        function() return visual().showComboCount end,
+        function(v) visual().showComboCount = v end)
+    cbCombo:SetPoint("TOPLEFT", cbRunic, "BOTTOMLEFT", 0, -2)
+
+    local cbHaloOOC = makeCheckbox(parent, "Hide pressure halo out of combat",
         function() return visual().haloInCombatOnly end,
         function(v) visual().haloInCombatOnly = v end)
-    cbHaloOOC:SetPoint("TOPLEFT", cbResource, "BOTTOMLEFT", 0, -2)
+    cbHaloOOC:SetPoint("TOPLEFT", cbCombo, "BOTTOMLEFT", 0, -10)
 
     local styleDD = makeDropdown(parent,
         "Default block style (for /ae block add)",
@@ -402,77 +427,162 @@ local function buildVisualTab(parent)
         },
         function() return visual().defaultBlockStyle end,
         function(v) visual().defaultBlockStyle = v end)
-    styleDD:SetPoint("TOPLEFT", cbHaloOOC, "BOTTOMLEFT", -18, -16)
+    styleDD:SetPoint("TOPLEFT", cbHaloOOC, "BOTTOMLEFT", -18, -10)
+end
+
+----------------------------------------------------------------
+-- Blocks tab — row list
+----------------------------------------------------------------
+
+local BLOCK_ROW_H = 36
+local BLOCK_ROW_PAD = 4
+local blockRows = {}
+
+local function getBlockRow(parent, i)
+    if blockRows[i] then return blockRows[i] end
+    local row = CreateFrame("Frame", nil, parent)
+    row:SetHeight(BLOCK_ROW_H)
+    local bg = row:CreateTexture(nil, "BACKGROUND")
+    bg:SetTexture(0.08, 0.08, 0.08, 0.6)
+    bg:SetAllPoints()
+
+    local idFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    idFs:SetPoint("TOPLEFT", row, "TOPLEFT", 6, -4)
+    idFs:SetWidth(70)
+    idFs:SetJustifyH("LEFT")
+    row.id = idFs
+
+    local posFs = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    posFs:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 6, 4)
+    posFs:SetWidth(110)
+    posFs:SetJustifyH("LEFT")
+    row.pos = posFs
+
+    local widgetsFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+    widgetsFs:SetPoint("LEFT", idFs, "RIGHT", 6, 0)
+    widgetsFs:SetWidth(220)
+    widgetsFs:SetHeight(BLOCK_ROW_H - 8)
+    widgetsFs:SetJustifyH("LEFT")
+    widgetsFs:SetJustifyV("MIDDLE")
+    row.widgets = widgetsFs
+
+    local del = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    del:SetSize(70, 22)
+    del:SetPoint("RIGHT", -4, 0)
+    del:SetText("Delete")
+    row.del = del
+
+    blockRows[i] = row
+    return row
+end
+
+local function refreshBlockRows(parent)
+    local blocks = AegisDBChar and AegisDBChar.blocks or {}
+    -- Hide all rows first; we re-show the ones we use.
+    for _, row in pairs(blockRows) do row:Hide() end
+
+    local cursor = 0
+    for i, b in ipairs(blocks) do
+        local row = getBlockRow(parent, i)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT",  parent, "TOPLEFT",  4, -cursor)
+        row:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -4, -cursor)
+        cursor = cursor + BLOCK_ROW_H + BLOCK_ROW_PAD
+
+        row.id:SetText(b.id or "?")
+
+        local p = b.position or {}
+        row.pos:SetText(("%s %+d,%+d"):format(
+            p.point or "?", p.xOffset or 0, p.yOffset or 0))
+
+        local widgets = (b.widgets and #b.widgets > 0)
+            and table.concat(b.widgets, ", ") or "(empty)"
+        local style = b.style or "standard"
+        local orient = (b.orientation == "vertical") and "vertical" or "horizontal"
+        row.widgets:SetText(("%s, %s\n%s"):format(orient, style, widgets))
+
+        local id = b.id
+        row.del:SetScript("OnClick", function()
+            if not id or not AegisDBChar.blocks then return end
+            for j = 1, #AegisDBChar.blocks do
+                if AegisDBChar.blocks[j].id == id then
+                    tremove(AegisDBChar.blocks, j)
+                    break
+                end
+            end
+            if ns.BlockManager and ns.BlockManager.Build then
+                ns.BlockManager.Build()
+            end
+            S.Refresh()
+        end)
+
+        row:Show()
+    end
+    return cursor
+end
+
+local function generateBlockId()
+    local used = {}
+    if AegisDBChar.blocks then
+        for _, b in ipairs(AegisDBChar.blocks) do
+            if b.id then used[b.id] = true end
+        end
+    end
+    local i = 1
+    while used["block" .. i] do i = i + 1 end
+    return "block" .. i
 end
 
 local function buildBlocksTab(parent)
     local hdr = makeHeader(parent, "Blocks")
     hdr:SetPoint("TOPLEFT", parent, "TOPLEFT", 8, -4)
 
-    local body = makeBody(parent,
-        "Block management lives on slash commands:\n\n"
-        .. "  /ae block list                                 - list blocks\n"
-        .. "  /ae block add <h|v> <widget1> [widget2] ...    - new block at center\n"
-        .. "  /ae block remove <id>                          - delete a block\n\n"
-        .. "  /ae lock                                       - lock all blocks\n"
-        .. "  /ae unlock                                     - unlock for dragging")
-    body:SetPoint("TOPLEFT", hdr, "BOTTOMLEFT", 4, -8)
-    body:SetWidth(440)
+    local hint = makeBody(parent,
+        "Each row is a block. Click Delete to remove. Use /ae unlock to drag.\n"
+        .. "Add widgets to a block via:  /ae block add <h|v> <widget1> [widget2] ...")
+    hint:SetPoint("TOPLEFT", hdr, "BOTTOMLEFT", 4, -6)
+    hint:SetWidth(440)
 
-    local resetBtn = makeButton(parent, "Reset blocks to defaults", 220, function()
+    -- Container for rows.
+    local listHost = CreateFrame("Frame", nil, parent)
+    listHost:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", -4, -10)
+    listHost:SetPoint("RIGHT", parent, "RIGHT", -8, 0)
+    listHost:SetHeight(280)
+
+    local function refreshList()
+        refreshBlockRows(listHost)
+    end
+    refreshList()
+    tinsert(S.refreshHandlers, refreshList)
+
+    -- Footer buttons.
+    local addBtn = makeButton(parent, "Add empty block at center", 200, function()
+        local newBlock = {
+            id          = generateBlockId(),
+            position    = {
+                point         = "CENTER",
+                relativePoint = "CENTER",
+                xOffset       = 0,
+                yOffset       = 0,
+            },
+            orientation = "horizontal",
+            style       = visual().defaultBlockStyle or "standard",
+            scale       = 1.0,
+            widgets     = {},
+        }
+        AegisDBChar.blocks = AegisDBChar.blocks or {}
+        tinsert(AegisDBChar.blocks, newBlock)
+        if ns.BlockManager and ns.BlockManager.Build then
+            ns.BlockManager.Build()
+        end
+        S.Refresh()
+    end)
+    addBtn:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", 8, 8)
+
+    local resetBtn = makeButton(parent, "Reset to defaults", 160, function()
         if StaticPopup_Show then StaticPopup_Show("AEGIS_RESET_CONFIRM") end
     end)
-    resetBtn:SetPoint("TOPLEFT", body, "BOTTOMLEFT", -4, -16)
-
-    -- Live block summary, updated when the tab is shown.
-    local summary = parent:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    summary:SetJustifyH("LEFT")
-    summary:SetPoint("TOPLEFT", resetBtn, "BOTTOMLEFT", 4, -20)
-    summary:SetWidth(440)
-
-    local function refresh()
-        local blocks = AegisDBChar and AegisDBChar.blocks
-        if not blocks or #blocks == 0 then
-            summary:SetText("(no blocks installed)")
-            return
-        end
-        local lines = {}
-        for i, b in ipairs(blocks) do
-            local p = b.position or {}
-            local pos = ("%s %+d,%+d"):format(
-                p.point or "?", p.xOffset or 0, p.yOffset or 0)
-            local widgets = (b.widgets and #b.widgets > 0)
-                and table.concat(b.widgets, ", ") or "(empty)"
-            tinsert(lines, ("[%d] %s @ %s (%s/%s) -> %s"):format(
-                i, b.id or "?", pos,
-                b.orientation or "horizontal",
-                b.style or "standard",
-                widgets))
-        end
-        summary:SetText(table.concat(lines, "\n"))
-    end
-    refresh()
-    tinsert(S.refreshHandlers, refresh)
-end
-
-local function buildAboutTab(parent)
-    local title = makeHeader(parent, "Aegis")
-    title:SetPoint("TOPLEFT", parent, "TOPLEFT", 8, -4)
-
-    local subtitle = makeBody(parent,
-        ("v%s — player HUD with pressure tracking"):format(ns.version or "?"))
-    subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -4)
-
-    local body = makeBody(parent,
-        "Five-tier pressure state (healing / none / light / warning /\n"
-        .. "critical) drives a colored halo around the health widget.\n"
-        .. "State is the max severity of TTD-based and drain-rate-based\n"
-        .. "ladders, computed on a sliding window of combat-log events.\n\n"
-        .. "Author: SpySpoTt3d\n"
-        .. "Repo:   https://github.com/spyspott3d/Aegis\n"
-        .. "License: MIT")
-    body:SetPoint("TOPLEFT", subtitle, "BOTTOMLEFT", 0, -16)
-    body:SetWidth(440)
+    resetBtn:SetPoint("LEFT", addBtn, "RIGHT", 8, 0)
 end
 
 ----------------------------------------------------------------
@@ -498,26 +608,9 @@ end
 function S.Toggle() S.Open() end
 
 ----------------------------------------------------------------
--- Default tab registrations
+-- Default tab registrations (in display order)
 ----------------------------------------------------------------
 
-S.RegisterTab({
-    name  = "pressure",
-    title = "Pressure",
-    build = buildPressureTab,
-})
-S.RegisterTab({
-    name  = "visual",
-    title = "Visual",
-    build = buildVisualTab,
-})
-S.RegisterTab({
-    name  = "blocks",
-    title = "Blocks",
-    build = buildBlocksTab,
-})
-S.RegisterTab({
-    name  = "about",
-    title = "About",
-    build = buildAboutTab,
-})
+S.RegisterTab({ name = "pressure", title = "Pressure", build = buildPressureTab })
+S.RegisterTab({ name = "visual",   title = "Visual",   build = buildVisualTab   })
+S.RegisterTab({ name = "blocks",   title = "Blocks",   build = buildBlocksTab   })

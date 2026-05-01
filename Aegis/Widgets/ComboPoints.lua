@@ -21,7 +21,8 @@ function ComboPoints.GetPreferredSize(orientation)
     -- Combo pips look weird as a vertical column. Even in vertical-orientation
     -- blocks, the row stays horizontal — the widget reports a wider-than-tall
     -- footprint and the block packs it as one row.
-    local w = NUM_PIPS * PIP_SIZE + (NUM_PIPS - 1) * PIP_GAP
+    -- Reserve extra width for the optional "n/N" count text on the right.
+    local w = NUM_PIPS * PIP_SIZE + (NUM_PIPS - 1) * PIP_GAP + 28
     return w, PIP_SIZE
 end
 
@@ -104,6 +105,18 @@ local function refresh(frame)
             end
         end
     end
+    -- Optional integer count overlay.
+    if frame.countText then
+        local v = AegisDB and AegisDB.visual
+        local show = v and v.showComboCount and count > 0
+        if show then
+            frame.countText:SetText(("%d/%d"):format(count, NUM_PIPS))
+            frame.countText:SetTextColor(color[1], color[2], color[3], 1)
+            frame.countText:Show()
+        else
+            frame.countText:Hide()
+        end
+    end
 end
 
 ComboPoints.Refresh = refresh
@@ -126,6 +139,13 @@ function ComboPoints.Build(parent, orientation, style)
         frame.pips[i] = pip
         prev = pip
     end
+
+    -- Count overlay ("3/5"), opt-in via AegisDB.visual.showComboCount.
+    local countText = frame:CreateFontString(nil, "OVERLAY")
+    countText:SetFont(Theme.font, Theme.fontSize, Theme.fontFlags)
+    countText:SetPoint("LEFT", prev, "RIGHT", 6, 0)
+    countText:Hide()
+    frame.countText = countText
 
     frame:RegisterEvent("PLAYER_COMBO_POINTS")
     frame:RegisterEvent("UNIT_COMBO_POINTS")
