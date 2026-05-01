@@ -296,6 +296,55 @@ local function transition(rawState)
 end
 
 ----------------------------------------------------------------
+-- Raw state derivation from current sliding values
+----------------------------------------------------------------
+
+local function rawStateFromTTD(ttd, warnTTD, critTTD)
+    if ttd <= critTTD then return "critical" end
+    if ttd <= warnTTD then return "warning"  end
+    return "light"
+end
+
+local function rawStateFromDrain(drain, warnDrain, critDrain)
+    if drain >= critDrain then return "critical" end
+    if drain >= warnDrain then return "warning"  end
+    return "light"
+end
+
+-- Returns the raw state string for the current sliding-window numbers.
+-- Side effect: assigns Pressure.ttd (number for net-loss states, nil
+-- otherwise). Kept separate so recompute stays under the cyclomatic
+-- complexity ceiling.
+local function deriveRawState()
+    local netLoss = sliding_dps_in - sliding_hps_in
+    if sliding_hps_in > sliding_dps_in and sliding_hps_in > 0 then
+        Pressure.ttd = nil
+        return "healing"
+    end
+    if netLoss <= 0 then
+        Pressure.ttd = nil
+        return "none"
+    end
+    local cur = UnitHealth("player") or 0
+    local mx  = UnitHealthMax("player") or 1
+    if mx < 1 then mx = 1 end
+    local ttd = cur / netLoss
+    Pressure.ttd = ttd
+    local drain = netLoss / mx
+
+    local thresholds = (AegisDB and AegisDB.pressure
+        and AegisDB.pressure.thresholds) or {}
+    local fromTTD   = rawStateFromTTD(ttd,
+        thresholds.warningTTD or 10, thresholds.criticalTTD or 5)
+    local fromDrain = rawStateFromDrain(drain,
+        thresholds.warningDrain or 0.01, thresholds.criticalDrain or 0.03)
+    if STATE_RANK[fromDrain] > STATE_RANK[fromTTD] then
+        return fromDrain
+    end
+    return fromTTD
+end
+
+----------------------------------------------------------------
 -- Recompute (called every TICK_INTERVAL)
 ----------------------------------------------------------------
 
@@ -351,67 +400,9 @@ local function recompute()
         Pressure.hps_out = 0
     end
 
-    -- State from sliding (responsive). Five-way:
-    --   healing  : HPS_in > DPS_in and HPS_in > 0 — you are actively
-    --              gaining HP from heals.
-    --   none     : both flows quiet, or perfectly balanced at 0.
-    --   light    : net drain present but neither TTD nor drain rate
-    --              triggers a stronger signal.
-    --   warning  : sustained drain (drainWarn) OR TTD <= warningTTD.
-    --   critical : heavy drain (drainCrit) OR TTD <= criticalTTD —
-    --              imminent or rapid death.
-    -- Drain-based catches sustained attrition where TTD is large but the
-    -- trajectory is decisive on a long fight; TTD-based catches burst
-    -- danger. State is the max severity of the two for net-loss cases.
-    local netLoss = sliding_dps_in - sliding_hps_in
-    local rawState
-    if sliding_hps_in > sliding_dps_in and sliding_hps_in > 0 then
-        rawState = "healing"
-        Pressure.ttd = nil
-    elseif netLoss > 0 then
-        local cur = UnitHealth("player") or 0
-        local mx  = UnitHealthMax("player") or 1
-        if mx < 1 then mx = 1 end
-        local ttd = cur / netLoss
-        local drain = netLoss / mx
-        Pressure.ttd = ttd
-
-        local thresholds = (AegisDB and AegisDB.pressure
-            and AegisDB.pressure.thresholds) or {}
-        local critTTD   = thresholds.criticalTTD   or 5
-        local warnTTD   = thresholds.warningTTD    or 10
-        local critDrain = thresholds.criticalDrain or 0.03
-        local warnDrain = thresholds.warningDrain  or 0.01
-
-        local fromTTD
-        if ttd <= critTTD then
-            fromTTD = "critical"
-        elseif ttd <= warnTTD then
-            fromTTD = "warning"
-        else
-            fromTTD = "light"
-        end
-
-        local fromDrain
-        if drain >= critDrain then
-            fromDrain = "critical"
-        elseif drain >= warnDrain then
-            fromDrain = "warning"
-        else
-            fromDrain = "light"
-        end
-
-        if STATE_RANK[fromDrain] > STATE_RANK[fromTTD] then
-            rawState = fromDrain
-        else
-            rawState = fromTTD
-        end
-    else
-        rawState = "none"
-        Pressure.ttd = nil
-    end
-
-    transition(rawState)
+    -- State from sliding (responsive). See deriveRawState above for the
+    -- five-tier hybrid drain+TTD logic.
+    transition(deriveRawState())
 end
 
 ----------------------------------------------------------------
