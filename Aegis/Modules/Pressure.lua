@@ -60,7 +60,11 @@ local HEAL_SUBEVENTS = {
     SPELL_PERIODIC_HEAL = true,
 }
 
+-- States, ordered by severity. `healing` is "less severe" than `none` (it is
+-- the most positive state — heals dominate damage). Hysteresis keys off
+-- this ordering: transition to a less severe state requires sustaining.
 local STATE_RANK = {
+    healing  = -1,
     none     = 0,
     light    = 1,
     warning  = 2,
@@ -347,25 +351,63 @@ local function recompute()
         Pressure.hps_out = 0
     end
 
-    -- TTD / state from sliding (responsive).
+    -- State from sliding (responsive). Five-way:
+    --   healing  : HPS_in > DPS_in and HPS_in > 0 — you are actively
+    --              gaining HP from heals.
+    --   none     : both flows quiet, or perfectly balanced at 0.
+    --   light    : net drain present but neither TTD nor drain rate
+    --              triggers a stronger signal.
+    --   warning  : sustained drain (drainWarn) OR TTD <= warningTTD.
+    --   critical : heavy drain (drainCrit) OR TTD <= criticalTTD —
+    --              imminent or rapid death.
+    -- Drain-based catches sustained attrition where TTD is large but the
+    -- trajectory is decisive on a long fight; TTD-based catches burst
+    -- danger. State is the max severity of the two for net-loss cases.
     local netLoss = sliding_dps_in - sliding_hps_in
-    local rawState = "none"
-    if netLoss > 0 then
+    local rawState
+    if sliding_hps_in > sliding_dps_in and sliding_hps_in > 0 then
+        rawState = "healing"
+        Pressure.ttd = nil
+    elseif netLoss > 0 then
         local cur = UnitHealth("player") or 0
+        local mx  = UnitHealthMax("player") or 1
+        if mx < 1 then mx = 1 end
         local ttd = cur / netLoss
+        local drain = netLoss / mx
         Pressure.ttd = ttd
+
         local thresholds = (AegisDB and AegisDB.pressure
             and AegisDB.pressure.thresholds) or {}
-        local critT = thresholds.critical or 5
-        local warnT = thresholds.warning or 10
-        if ttd <= critT then
-            rawState = "critical"
-        elseif ttd <= warnT then
-            rawState = "warning"
+        local critTTD   = thresholds.criticalTTD   or 5
+        local warnTTD   = thresholds.warningTTD    or 10
+        local critDrain = thresholds.criticalDrain or 0.03
+        local warnDrain = thresholds.warningDrain  or 0.01
+
+        local fromTTD
+        if ttd <= critTTD then
+            fromTTD = "critical"
+        elseif ttd <= warnTTD then
+            fromTTD = "warning"
         else
-            rawState = "light"
+            fromTTD = "light"
+        end
+
+        local fromDrain
+        if drain >= critDrain then
+            fromDrain = "critical"
+        elseif drain >= warnDrain then
+            fromDrain = "warning"
+        else
+            fromDrain = "light"
+        end
+
+        if STATE_RANK[fromDrain] > STATE_RANK[fromTTD] then
+            rawState = fromDrain
+        else
+            rawState = fromTTD
         end
     else
+        rawState = "none"
         Pressure.ttd = nil
     end
 
@@ -383,9 +425,16 @@ local function combatStatusLabel()
 end
 
 local function printDebug()
-    print(("|cff1ED760Aegis|r pressure: state=%s ttd=%s [%s]"):format(
+    local netLoss = sliding_dps_in - sliding_hps_in
+    local drain = 0
+    if netLoss > 0 then
+        local mx = UnitHealthMax("player") or 1
+        if mx >= 1 then drain = (netLoss / mx) * 100 end
+    end
+    print(("|cff1ED760Aegis|r pressure: state=%s ttd=%s drain=%.2f%%/s [%s]"):format(
         Pressure.state,
         Pressure.ttd and ("%.1fs"):format(Pressure.ttd) or "nil",
+        drain,
         combatStatusLabel()))
     print(("  session: DPS_in=%.0f HPS_in=%.0f DPS_out=%.0f HPS_out=%.0f"):format(
         Pressure.dps_in, Pressure.hps_in,

@@ -7,15 +7,21 @@ local _, ns = ...
 ns.Config = ns.Config or {}
 local Config = ns.Config
 
-Config.SCHEMA_VERSION = 2
+Config.SCHEMA_VERSION = 3
 
 local accountDefaults = {
-    version = 2,
+    version = 3,
     pressure = {
         windowSeconds = 4,
         thresholds = {
-            warning = 10,
-            critical = 5,
+            -- TTD-based (immediate danger from current rate, in seconds).
+            warningTTD   = 10,
+            criticalTTD  = 5,
+            -- Drain-based (% of max HP per second, expressed as a fraction:
+            -- 0.01 == 1%/s). Catches sustained attrition that TTD alone
+            -- under-flags on long fights with high-HP characters.
+            warningDrain  = 0.01,
+            criticalDrain = 0.03,
         },
         soundOnCritical = false,
         hysteresisSeconds = 0.5,
@@ -62,7 +68,7 @@ local defaultBlocks = {
 }
 
 local charDefaults = {
-    version = 2,
+    version = 3,
     locked = true,
     -- `blocks` is NOT applied via applyDefaults. It is seeded once if missing
     -- (see installBlocksIfMissing). applyDefaults is for key-value fills and
@@ -107,6 +113,20 @@ local accountMigrations = {
         end
         db.version = 2
     end,
+    [3] = function(db)
+        -- v2 -> v3: pressure thresholds split into TTD-based and drain-based
+        -- pairs. Old `warning` and `critical` were TTD seconds; rename them
+        -- to warningTTD / criticalTTD. Drain thresholds are added by the
+        -- defaults pass.
+        if db.pressure and db.pressure.thresholds then
+            local th = db.pressure.thresholds
+            if th.warning  ~= nil then th.warningTTD  = th.warning  end
+            if th.critical ~= nil then th.criticalTTD = th.critical end
+            th.warning  = nil
+            th.critical = nil
+        end
+        db.version = 3
+    end,
 }
 
 local charMigrations = {
@@ -119,6 +139,10 @@ local charMigrations = {
         db.position = nil
         db.blocks = nil
         db.version = 2
+    end,
+    [3] = function(db)
+        -- v2 -> v3: no per-character changes; bump only.
+        db.version = 3
     end,
 }
 

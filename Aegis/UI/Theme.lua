@@ -17,9 +17,16 @@ Theme.colors = {
     rage         = rgb(0xE8, 0x41, 0x41),       -- #E84141
     energy       = rgb(0xFF, 0xD9, 0x3B),       -- #FFD93B
     runic        = rgb(0x1E, 0xD2, 0xDA),       -- #1ED2DA
-    -- Pressure overlay
+    -- Pressure overlay (legacy aliases retained for Phase 4 wiring)
     pressureWarn = rgb(0xFF, 0xAA, 0x00),       -- #FFAA00
     pressureCrit = rgb(0xFF, 0x20, 0x20),       -- #FF2020
+    -- Halo around the health widget per pressure state. The HealthBar
+    -- widget (Phase 4) renders a colored glow around its frame whose
+    -- color and alpha track the current state.
+    haloHealing  = rgb(0x3F, 0x8E, 0xFF),       -- #3F8EFF blue (heal > damage)
+    haloLight    = rgb(0xFF, 0xD9, 0x3B),       -- #FFD93B yellow (slow drain)
+    haloWarning  = rgb(0xFF, 0xAA, 0x00),       -- #FFAA00 orange (sustained drain)
+    haloCritical = rgb(0xFF, 0x20, 0x20),       -- #FF2020 red (imminent / heavy)
     -- Combo point fills (yellow by default, red at max)
     comboFill    = rgb(0xFF, 0xD9, 0x3B),       -- #FFD93B (same as energy)
     comboMaxFill = rgb(0xFF, 0x20, 0x20),       -- #FF2020 (alert red)
