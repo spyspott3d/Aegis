@@ -314,10 +314,14 @@ function HealthBar.Build(parent, orientation, style)
     -- right edge, which made it disappear off the edge of left-side
     -- blocks). Right-justified so the seconds digit stays put as TTD
     -- changes magnitude.
+    -- TTD readout sits OUTSIDE the bar, hugged against the right edge.
+    -- Inside the bar overlaps the centered HP text. Outside-right places
+    -- it in the natural gap between the left block and the player
+    -- character at screen center, where the eye already rests.
     local ttdText = frame:CreateFontString(nil, "OVERLAY")
     ttdText:SetFont(Theme.font, Theme.fontSize + 2, Theme.fontFlags)
-    ttdText:SetPoint("RIGHT", frame, "RIGHT", -4, 0)
-    ttdText:SetJustifyH("RIGHT")
+    ttdText:SetPoint("LEFT", frame, "RIGHT", 6, 0)
+    ttdText:SetJustifyH("LEFT")
     ttdText:Hide()
     frame.ttdText = ttdText
 
