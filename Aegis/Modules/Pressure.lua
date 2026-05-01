@@ -1,20 +1,33 @@
 -- Aegis/Modules/Pressure.lua
 -- The pressure module: combat log parser, ring buffer, sliding-window
--- recompute, state machine with hysteresis, public getters for the four
--- DPS/HPS readouts. Phase 3 ships the data layer; Phase 4 will hook it to
--- the visual overlays on the health widget and to the four text widgets.
+-- recompute (for TTD/state), session-since-combat-start accumulators (for
+-- the displayed dps_in/hps_in/dps_out/hps_out values), state machine with
+-- hysteresis. Phase 3 ships the data layer; Phase 4 will hook it to the
+-- visual overlay on the health widget and to the four text widgets.
+--
+-- Two parallel metrics serve different needs:
+--
+--  * Sliding window (default 4s, configurable) drives the pressure state
+--    and TTD. It must be responsive to bursts: a sudden DPS spike should
+--    push the bar to warning/critical immediately, not lag behind a
+--    growing average.
+--
+--  * Session-since-combat-start drives the displayed text widgets. It is
+--    stable mid-fight even against slow attackers: a mob that hits once
+--    every 5s will produce a steady "session DPS" instead of a 4s
+--    sliding window that oscillates between a real value and 0 between
+--    hits. It freezes when leaving combat (so the post-fight readout is
+--    "the average for that fight") and resets at the next combat entry.
 --
 -- Hot path: COMBAT_LOG_EVENT_UNFILTERED fires hundreds of times per second
 -- in a 25-man fight. Per CLAUDE.md hard rule #4, the first thing the
 -- handler does is filter for events relevant to the player. Anything that
--- is neither incoming (destGUID == playerGUID) nor outgoing
--- (sourceFlags has the AFFILIATION_MINE bit) returns immediately, no
--- string parsing, no allocation.
+-- is neither incoming (destGUID == playerGUID) nor outgoing (sourceFlags
+-- has the AFFILIATION_MINE bit) returns immediately.
 --
 -- The ring buffer is pre-allocated once at module load (CLAUDE.md hard
--- rule #5). push() mutates the entry at the current head index; no
--- tinsert/tremove, no allocation. Recompute walks the buffer linearly,
--- producing four sums in a single pass.
+-- rule #5). push() mutates the entry at the current head index. Recompute
+-- walks the buffer linearly, producing four sliding sums in a single pass.
 
 local _, ns = ...
 ns.Pressure = ns.Pressure or {}
@@ -24,10 +37,15 @@ local Pressure = ns.Pressure
 -- Constants
 ----------------------------------------------------------------
 
-local BUFFER_SIZE      = 256
-local TICK_INTERVAL    = 0.25
-local DEBUG_INTERVAL   = 1.0
-local AFFILIATION_MINE = 0x00000001 -- bit-test against sourceFlags
+local BUFFER_SIZE          = 256
+local TICK_INTERVAL        = 0.25
+local DEBUG_INTERVAL       = 1.0
+local AFFILIATION_MINE     = 0x00000001 -- bit-test against sourceFlags
+local SESSION_PRIME_WINDOW = 1.0        -- prime session from buffer events
+                                         -- in this many seconds before
+                                         -- PLAYER_REGEN_DISABLED fires
+local SESSION_MIN_ELAPSED  = 0.5        -- below this, session DPS would
+                                         -- be a noisy spike; emit 0
 
 local DAMAGE_SUBEVENTS = {
     SWING_DAMAGE          = true,
@@ -50,12 +68,12 @@ local STATE_RANK = {
 }
 
 ----------------------------------------------------------------
--- Public state
+-- Public state (session-based for display widgets)
 ----------------------------------------------------------------
 
 Pressure.state   = "none"
 Pressure.ttd     = nil
-Pressure.dps_in  = 0
+Pressure.dps_in  = 0  -- session: total damage taken / combat elapsed
 Pressure.hps_in  = 0
 Pressure.dps_out = 0
 Pressure.hps_out = 0
@@ -67,11 +85,38 @@ function Pressure.GetOutgoingDPS()  return Pressure.dps_out end
 function Pressure.GetOutgoingHPS()  return Pressure.hps_out end
 
 ----------------------------------------------------------------
+-- Internal sliding-window values (for TTD / state)
+----------------------------------------------------------------
+
+local sliding_dps_in  = 0
+local sliding_hps_in  = 0
+local sliding_dps_out = 0
+local sliding_hps_out = 0
+
+function Pressure.GetSlidingIncomingDPS()  return sliding_dps_in  end
+function Pressure.GetSlidingIncomingHPS()  return sliding_hps_in  end
+function Pressure.GetSlidingOutgoingDPS()  return sliding_dps_out end
+function Pressure.GetSlidingOutgoingHPS()  return sliding_hps_out end
+
+----------------------------------------------------------------
+-- Session accumulators (reset per combat)
+----------------------------------------------------------------
+
+local sessionDamageIn  = 0
+local sessionHealIn    = 0
+local sessionDamageOut = 0
+local sessionHealOut   = 0
+local combatStartTime  = nil  -- nil before first combat
+local combatEndTime    = nil  -- non-nil while frozen out-of-combat
+
+local function inCombat()
+    return combatStartTime ~= nil and combatEndTime == nil
+end
+
+----------------------------------------------------------------
 -- Ring buffer
 ----------------------------------------------------------------
 
--- Each entry is a fixed 3-slot array: { timestamp, category, amount }.
--- Allocated once, mutated forever.
 local buffer = {}
 for i = 1, BUFFER_SIZE do buffer[i] = { 0, "", 0 } end
 local head = 0
@@ -113,12 +158,10 @@ local function parseDamage(subevent, a1, a2, a3, a4, a5, a6, a7, a8, a9)
     elseif subevent == "ENVIRONMENTAL_DAMAGE" then
         return a2 or 0, a7 or 0
     end
-    -- SPELL_DAMAGE, SPELL_PERIODIC_DAMAGE, RANGE_DAMAGE
     return a4 or 0, a9 or 0
 end
 
 local function parseHeal(_subevent, _a1, _a2, _a3, a4, a5)
-    -- SPELL_HEAL, SPELL_PERIODIC_HEAL: amount=a4, overhealing=a5.
     return a4 or 0, a5 or 0
 end
 
@@ -128,7 +171,7 @@ end
 
 local function onCombatLog(self, event,
     _timestamp, subevent,
-    sourceGUID, _sourceName, sourceFlags,
+    _sourceGUID, _sourceName, sourceFlags,
     destGUID, _destName, _destFlags,
     a1, a2, a3, a4, a5, a6, a7, a8, a9)
 
@@ -142,37 +185,93 @@ local function onCombatLog(self, event,
     if not isIncoming and not isOutgoing then return end
 
     local now = GetTime()
+    local accumulate = inCombat()
 
     if DAMAGE_SUBEVENTS[subevent] then
         local amount, absorbed = parseDamage(subevent, a1, a2, a3, a4, a5, a6, a7, a8, a9)
         if isIncoming then
-            -- Effective: subtract the absorbed portion (CLAUDE.md / SPEC).
             local eff = amount - absorbed
-            if eff > 0 then push(now, "damage_in", eff) end
+            if eff > 0 then
+                push(now, "damage_in", eff)
+                if accumulate then sessionDamageIn = sessionDamageIn + eff end
+            end
         end
         if isOutgoing then
-            -- Outgoing uses the raw amount (matches how damage meters
-            -- report DPS dealt; overkill stays counted).
-            if amount > 0 then push(now, "damage_out", amount) end
+            if amount > 0 then
+                push(now, "damage_out", amount)
+                if accumulate then sessionDamageOut = sessionDamageOut + amount end
+            end
         end
     elseif HEAL_SUBEVENTS[subevent] then
         local amount, overhealing = parseHeal(subevent, a1, a2, a3, a4, a5)
         local eff = amount - overhealing
         if eff > 0 then
-            if isIncoming then push(now, "heal_in", eff) end
-            if isOutgoing then push(now, "heal_out", eff) end
+            if isIncoming then
+                push(now, "heal_in", eff)
+                if accumulate then sessionHealIn = sessionHealIn + eff end
+            end
+            if isOutgoing then
+                push(now, "heal_out", eff)
+                if accumulate then sessionHealOut = sessionHealOut + eff end
+            end
         end
     end
 end
 
 ----------------------------------------------------------------
+-- Combat state handler (REGEN events drive session reset/freeze)
+----------------------------------------------------------------
+
+local function primeSessionFromBuffer(now)
+    -- The first hit of a fight typically fires *before* PLAYER_REGEN_DISABLED.
+    -- Scan recent buffer entries and fold them into the session totals so
+    -- the very first hit is not lost. Also walk back combatStartTime to
+    -- the earliest event in this prime window so elapsed time matches the
+    -- earliest data.
+    local cutoff = now - SESSION_PRIME_WINDOW
+    local earliest = combatStartTime or now
+    for i = 1, BUFFER_SIZE do
+        local e = buffer[i]
+        local ts = e[1]
+        if ts >= cutoff and ts <= now then
+            local cat, amt = e[2], e[3]
+            if     cat == "damage_in"  then sessionDamageIn  = sessionDamageIn  + amt
+            elseif cat == "heal_in"    then sessionHealIn    = sessionHealIn    + amt
+            elseif cat == "damage_out" then sessionDamageOut = sessionDamageOut + amt
+            elseif cat == "heal_out"   then sessionHealOut   = sessionHealOut   + amt
+            end
+            if ts < earliest then earliest = ts end
+        end
+    end
+    combatStartTime = earliest
+end
+
+local function onCombatState(self, event)
+    local now = GetTime()
+    if event == "PLAYER_REGEN_DISABLED" then
+        sessionDamageIn  = 0
+        sessionHealIn    = 0
+        sessionDamageOut = 0
+        sessionHealOut   = 0
+        combatStartTime  = now
+        combatEndTime    = nil
+        primeSessionFromBuffer(now)
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        -- Freeze: keep totals as-is; recompute will divide by the frozen
+        -- elapsed (combatEndTime - combatStartTime) so the displayed
+        -- average stops drifting.
+        combatEndTime = now
+    end
+end
+
+local combatStateFrame = CreateFrame("Frame")
+combatStateFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+combatStateFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+combatStateFrame:SetScript("OnEvent", onCombatState)
+
+----------------------------------------------------------------
 -- State transition with hysteresis
 ----------------------------------------------------------------
---
--- "lastValidTime" is the most recent moment when the raw-computed state was
--- at least as severe as the current state. If raw stays below current for
--- hysteresisSeconds without any spike back up, we accept the downgrade.
--- Worse states are adopted immediately.
 
 local lastValidTime = 0
 
@@ -202,6 +301,7 @@ local function recompute()
         and AegisDB.pressure.windowSeconds) or 4
     local cutoff = now - window
 
+    -- Sliding window pass (used for TTD/state).
     local d_in, h_in, d_out, h_out = 0, 0, 0, 0
     for i = 1, BUFFER_SIZE do
         local e = buffer[i]
@@ -215,13 +315,40 @@ local function recompute()
             end
         end
     end
+    sliding_dps_in  = d_in  / window
+    sliding_hps_in  = h_in  / window
+    sliding_dps_out = d_out / window
+    sliding_hps_out = h_out / window
 
-    Pressure.dps_in  = d_in  / window
-    Pressure.hps_in  = h_in  / window
-    Pressure.dps_out = d_out / window
-    Pressure.hps_out = h_out / window
+    -- Session pass (used for displayed widgets).
+    if combatStartTime then
+        local elapsed
+        if combatEndTime then
+            elapsed = combatEndTime - combatStartTime
+        else
+            elapsed = now - combatStartTime
+        end
+        if elapsed >= SESSION_MIN_ELAPSED then
+            Pressure.dps_in  = sessionDamageIn  / elapsed
+            Pressure.hps_in  = sessionHealIn    / elapsed
+            Pressure.dps_out = sessionDamageOut / elapsed
+            Pressure.hps_out = sessionHealOut   / elapsed
+        else
+            Pressure.dps_in  = 0
+            Pressure.hps_in  = 0
+            Pressure.dps_out = 0
+            Pressure.hps_out = 0
+        end
+    else
+        -- Never been in combat this session.
+        Pressure.dps_in  = 0
+        Pressure.hps_in  = 0
+        Pressure.dps_out = 0
+        Pressure.hps_out = 0
+    end
 
-    local netLoss = Pressure.dps_in - Pressure.hps_in
+    -- TTD / state from sliding (responsive).
+    local netLoss = sliding_dps_in - sliding_hps_in
     local rawState = "none"
     if netLoss > 0 then
         local cur = UnitHealth("player") or 0
@@ -249,17 +376,27 @@ end
 -- Debug print (toggled by /ae debug pressure on|off)
 ----------------------------------------------------------------
 
+local function combatStatusLabel()
+    if not combatStartTime then return "no-combat" end
+    if combatEndTime then return "frozen" end
+    return "in-combat"
+end
+
 local function printDebug()
-    print(("|cff1ED760Aegis|r pressure: state=%s ttd=%s | "
-        .. "DPS_in=%.0f HPS_in=%.0f DPS_out=%.0f HPS_out=%.0f"):format(
+    print(("|cff1ED760Aegis|r pressure: state=%s ttd=%s [%s]"):format(
         Pressure.state,
         Pressure.ttd and ("%.1fs"):format(Pressure.ttd) or "nil",
+        combatStatusLabel()))
+    print(("  session: DPS_in=%.0f HPS_in=%.0f DPS_out=%.0f HPS_out=%.0f"):format(
         Pressure.dps_in, Pressure.hps_in,
         Pressure.dps_out, Pressure.hps_out))
+    print(("  window:  DPS_in=%.0f HPS_in=%.0f DPS_out=%.0f HPS_out=%.0f"):format(
+        sliding_dps_in, sliding_hps_in,
+        sliding_dps_out, sliding_hps_out))
 end
 
 ----------------------------------------------------------------
--- Tickers and event hookup
+-- Tickers and combat log hookup
 ----------------------------------------------------------------
 
 local tickAccum  = 0
