@@ -20,6 +20,9 @@ Theme.colors = {
     -- Pressure overlay
     pressureWarn = rgb(0xFF, 0xAA, 0x00),       -- #FFAA00
     pressureCrit = rgb(0xFF, 0x20, 0x20),       -- #FF2020
+    -- Combo point fills (yellow by default, red at max)
+    comboFill    = rgb(0xFF, 0xD9, 0x3B),       -- #FFD93B (same as energy)
+    comboMaxFill = rgb(0xFF, 0x20, 0x20),       -- #FF2020 (alert red)
     -- Chrome
     bgDark       = rgb(0x0E, 0x0E, 0x10, 0.85), -- #0E0E10
     border       = rgb(0x00, 0x00, 0x00),       -- #000000

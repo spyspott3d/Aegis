@@ -49,8 +49,9 @@ local function buildPip(parent, theme, index, prevPip)
     local fill = pip:CreateTexture(nil, "ARTWORK")
     fill:SetAllPoints(pip)
     fill:SetTexture(theme.statusBarTexture)
-    local fc = theme.colors.energy
-    fill:SetVertexColor(fc[1], fc[2], fc[3], fc[4])
+    -- Color is set per-refresh based on count (yellow normally, red at max),
+    -- so we leave it default-white here; refresh paints it before any pip
+    -- becomes visible.
     pip.fill = fill
 
     local borderC = theme.colors.border
@@ -85,11 +86,22 @@ local function refresh(frame)
     if UnitExists("target") then
         count = GetComboPoints("player", "target") or 0
     end
+    -- At-max gets the alert red; otherwise the default yellow.
+    local Theme = ns.Theme
+    local atMax = (count >= NUM_PIPS)
+    local color = atMax and Theme.colors.comboMaxFill or Theme.colors.comboFill
     -- Show only filled pips. Hide the rest entirely (no dim placeholders).
     for i = 1, NUM_PIPS do
         local pip = frame.pips[i]
         if pip then
-            if i <= count then pip:Show() else pip:Hide() end
+            if i <= count then
+                if pip.fill then
+                    pip.fill:SetVertexColor(color[1], color[2], color[3], color[4])
+                end
+                pip:Show()
+            else
+                pip:Hide()
+            end
         end
     end
 end
