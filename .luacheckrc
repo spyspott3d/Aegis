@@ -41,6 +41,11 @@ read_globals = {
     -- Slash commands (SlashCmdList is in `globals` because we write to it)
     "ChatEdit_FocusActiveWindow", "ChatFrame_OpenChat",
 
+    -- Unit info (player and others)
+    "UnitHealth", "UnitHealthMax", "UnitGUID", "UnitName", "UnitClass",
+    "UnitPower", "UnitPowerMax", "UnitPowerType", "UnitExists",
+    "GetComboPoints", "GetShapeshiftForm",
+
     -- Items, bags
     "GetItemInfo", "GetItemQualityColor", "GetItemIcon", "GetContainerItemInfo",
     "GetContainerItemLink", "GetContainerNumSlots", "GetContainerNumFreeSlots",

@@ -12,4 +12,5 @@ Core\Util.lua
 Core\Config.lua
 UI\Theme.lua
 UI\Anchor.lua
+Modules\HealthBar.lua
 Core\Init.lua

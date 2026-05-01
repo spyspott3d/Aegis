@@ -112,6 +112,9 @@ lifecycle:SetScript("OnEvent", function(self, event, arg1)
         if ns.Anchor and ns.Anchor.Build then
             ns.Anchor.Build()
         end
+        if ns.HealthBar and ns.HealthBar.Build then
+            ns.HealthBar.Build()
+        end
         print(("%s v%s loaded. Type /ae for commands."):format(
             colorize(addonName, "1ED760"), ns.version))
     end
