@@ -1,17 +1,14 @@
 -- Aegis/Core/Init.lua
--- Addon namespace, lifecycle, slash command dispatch. Loads last so all
--- modules (Util, Config, Theme, Anchor) have already attached themselves to
--- the namespace.
+-- Addon namespace, lifecycle, slash command dispatch. Loads after every
+-- widget registers itself in ns.WidgetCatalog and after Block / BlockManager
+-- are defined, so PLAYER_LOGIN can build all blocks immediately.
 
 local addonName, ns = ...
 
--- Public namespace exposed as a global so /run and other modules can reach it.
 Aegis = ns
 ns.name = addonName
 ns.version = GetAddOnMetadata(addonName, "Version") or "?"
 
--- SavedVariables stubs in case ADDON_LOADED has not yet fired by the time
--- something reads them (defensive; Config.Initialize is the real path).
 AegisDB = AegisDB or {}
 AegisDBChar = AegisDBChar or {}
 
@@ -31,6 +28,27 @@ local function colorize(text, hex)
 end
 
 ----------------------------------------------------------------
+-- Reset confirm dialog
+----------------------------------------------------------------
+
+StaticPopupDialogs["AEGIS_RESET_CONFIRM"] = {
+    text = "Reset all Aegis blocks to the default layout? Your current "
+        .. "block list will be discarded.",
+    button1 = "Reset",
+    button2 = "Cancel",
+    OnAccept = function()
+        if ns.BlockManager and ns.BlockManager.Reset then
+            ns.BlockManager.Reset()
+            aprint("blocks reset to default.")
+        end
+    end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+}
+
+----------------------------------------------------------------
 -- Slash command dispatch
 ----------------------------------------------------------------
 
@@ -38,9 +56,9 @@ local sub = {}
 
 sub.help = function()
     print(colorize("Aegis", "1ED760") .. " commands:")
-    print("  /ae lock      - lock the HUD position")
-    print("  /ae unlock    - unlock the HUD for dragging")
-    print("  /ae reset     - reset HUD position to default")
+    print("  /ae lock      - lock all blocks in place")
+    print("  /ae unlock    - unlock all blocks for dragging")
+    print("  /ae reset     - reset blocks to default layout (asks to confirm)")
     print("  /ae about     - show version info")
     print("  /ae help      - show this list")
     print("  /ae pressure  - (not yet implemented)")
@@ -48,18 +66,17 @@ sub.help = function()
 end
 
 sub.lock = function()
-    if ns.Anchor and ns.Anchor.Lock then ns.Anchor.Lock() end
-    aprint("HUD locked.")
+    if ns.BlockManager then ns.BlockManager.Lock() end
+    aprint("all blocks locked.")
 end
 
 sub.unlock = function()
-    if ns.Anchor and ns.Anchor.Unlock then ns.Anchor.Unlock() end
-    aprint("HUD unlocked. Drag to move, /ae lock when done.")
+    if ns.BlockManager then ns.BlockManager.Unlock() end
+    aprint("blocks unlocked. Drag to move, /ae lock when done.")
 end
 
 sub.reset = function()
-    if ns.Anchor and ns.Anchor.Reset then ns.Anchor.Reset() end
-    aprint("position reset to default.")
+    StaticPopup_Show("AEGIS_RESET_CONFIRM")
 end
 
 sub.about = function()
@@ -109,20 +126,12 @@ lifecycle:SetScript("OnEvent", function(self, event, arg1)
             ns.Config.Initialize()
         end
     elseif event == "PLAYER_LOGIN" then
-        -- Cache class once. Per CLAUDE.md, repeated UnitClass calls in hot
-        -- paths are wasteful; class never changes for a character.
+        -- Cache stable identifiers per CLAUDE.md (class never changes; the
+        -- player GUID is needed by Phase 3's combat log filter).
         ns.playerClass = select(2, UnitClass("player"))
-        if ns.Anchor and ns.Anchor.Build then
-            ns.Anchor.Build()
-        end
-        if ns.HealthBar and ns.HealthBar.Build then
-            ns.HealthBar.Build()
-        end
-        if ns.ResourceBar and ns.ResourceBar.Build then
-            ns.ResourceBar.Build()
-        end
-        if ns.ComboPoints and ns.ComboPoints.Build then
-            ns.ComboPoints.Build()
+        ns.playerGUID  = UnitGUID("player")
+        if ns.BlockManager and ns.BlockManager.Build then
+            ns.BlockManager.Build()
         end
         print(("%s v%s loaded. Type /ae for commands."):format(
             colorize(addonName, "1ED760"), ns.version))

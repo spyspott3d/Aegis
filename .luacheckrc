@@ -17,6 +17,9 @@ globals = {
     "SLASH_AE2",
     -- Blizzard slash command registry: addons add their own "KEY" entry to it.
     "SlashCmdList",
+    -- StaticPopupDialogs: addons add their own dialog entries to this table
+    -- (e.g. AEGIS_RESET_CONFIRM).
+    "StaticPopupDialogs",
 }
 
 -- Read-only globals: WoW client API and Lua stdlib that the addon reads but
@@ -31,9 +34,10 @@ read_globals = {
     "tContains", "max", "min", "abs", "floor", "ceil", "mod", "random",
     "date", "time", "GetTime", "debugstack",
 
-    -- Frame and UI API
+    -- Frame and UI API (StaticPopupDialogs is in `globals` because we write
+    -- our own dialog entries to it).
     "CreateFrame", "UIParent", "WorldFrame", "GameTooltip", "DEFAULT_CHAT_FRAME",
-    "ChatFrame1", "StaticPopupDialogs", "StaticPopup_Show", "StaticPopup_Hide",
+    "ChatFrame1", "StaticPopup_Show", "StaticPopup_Hide",
     "PlaySound", "PlaySoundFile", "GetCursorPosition", "GetScreenWidth",
     "GetScreenHeight", "InCombatLockdown", "IsAddOnLoaded", "LoadAddOn",
     "GetAddOnMetadata", "EnableAddOn", "DisableAddOn",
@@ -45,6 +49,8 @@ read_globals = {
     "UnitHealth", "UnitHealthMax", "UnitGUID", "UnitName", "UnitClass",
     "UnitPower", "UnitPowerMax", "UnitPowerType", "UnitExists",
     "GetComboPoints", "GetShapeshiftForm",
+    -- Cataclysm-style heal prediction (backported on Project Ascension)
+    "UnitGetIncomingHeals",
 
     -- Items, bags
     "GetItemInfo", "GetItemQualityColor", "GetItemIcon", "GetContainerItemInfo",
