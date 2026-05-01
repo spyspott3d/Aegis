@@ -15,6 +15,8 @@ globals = {
     "AegisDBChar",
     "SLASH_AE1",
     "SLASH_AE2",
+    -- Blizzard slash command registry: addons add their own "KEY" entry to it.
+    "SlashCmdList",
 }
 
 -- Read-only globals: WoW client API and Lua stdlib that the addon reads but
@@ -36,8 +38,8 @@ read_globals = {
     "GetScreenHeight", "InCombatLockdown", "IsAddOnLoaded", "LoadAddOn",
     "GetAddOnMetadata", "EnableAddOn", "DisableAddOn",
 
-    -- Slash commands
-    "SlashCmdList", "ChatEdit_FocusActiveWindow", "ChatFrame_OpenChat",
+    -- Slash commands (SlashCmdList is in `globals` because we write to it)
+    "ChatEdit_FocusActiveWindow", "ChatFrame_OpenChat",
 
     -- Items, bags
     "GetItemInfo", "GetItemQualityColor", "GetItemIcon", "GetContainerItemInfo",
