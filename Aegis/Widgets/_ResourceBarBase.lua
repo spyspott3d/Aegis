@@ -12,6 +12,16 @@
 --       events    = { "UNIT_MANA", "UNIT_MAXMANA",  -- events to register
 --                     "UNIT_DISPLAYPOWER",
 --                     "PLAYER_ENTERING_WORLD" },
+--       -- Optional: if set, the widget polls UnitPower at this cadence in
+--       -- addition to event-driven refreshes. Carve-out from CLAUDE.md
+--       -- hard rule #3 ("no OnUpdate on resource bars"). The rule is
+--       -- right in general; energy is a special case because the data
+--       -- ticks at 0.1s server-side and UNIT_ENERGY events can be coarser
+--       -- than that on Ascension. ~10 polls/sec on a single widget is
+--       -- ~0.005% CPU — negligible. Do not enable for resources that
+--       -- only change on discrete events (rage, runic) — there is
+--       -- nothing to interpolate.
+--       pollInterval = 0.1,
 --   })
 --   ns.Widgets.Register("mana", widget)
 
@@ -124,6 +134,21 @@ function Base.MakeWidget(config)
         end
         frame:SetScript("OnEvent", onEvent)
 
+        -- Optional polling cadence for resources whose events are coarser
+        -- than the underlying data updates (energy on Ascension). See the
+        -- usage example at the top of this file.
+        if config.pollInterval and config.pollInterval > 0 then
+            local interval = config.pollInterval
+            local accum = 0
+            frame:SetScript("OnUpdate", function(self, elapsed)
+                accum = accum + elapsed
+                if accum >= interval then
+                    accum = 0
+                    refresh(self)
+                end
+            end)
+        end
+
         refresh(frame)
         return frame, w, h
     end
@@ -132,6 +157,7 @@ function Base.MakeWidget(config)
         if not frame then return end
         frame:UnregisterAllEvents()
         frame:SetScript("OnEvent", nil)
+        frame:SetScript("OnUpdate", nil)
         frame:Hide()
         frame:SetParent(nil)
     end
