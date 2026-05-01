@@ -403,6 +403,19 @@ local function recompute()
     -- State from sliding (responsive). See deriveRawState above for the
     -- five-tier hybrid drain+TTD logic.
     transition(deriveRawState())
+
+    -- Push state to every health widget across all blocks. The widget
+    -- module attaches a SetPressure method to each frame at Build time
+    -- (see Widgets/HealthBar.lua).
+    if ns.BlockManager and ns.BlockManager.GetWidgetsByType then
+        local frames = ns.BlockManager.GetWidgetsByType("health")
+        for i = 1, #frames do
+            local f = frames[i]
+            if f.SetPressure then
+                f:SetPressure(Pressure.state, Pressure.ttd)
+            end
+        end
+    end
 end
 
 ----------------------------------------------------------------

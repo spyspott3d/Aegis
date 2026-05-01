@@ -1,9 +1,41 @@
 -- Aegis/Widgets/HealthBar.lua
--- Health widget. Always available. Hosts the pressure overlay (added in
--- Phase 4 via SetPressure(state, ttd) — for now the frame is just a HP bar).
+-- Health widget. Always available. Hosts the pressure halo (a colored
+-- border drawn outside the bar that signals incoming pressure state) and
+-- the incoming-heal segment (a light-green texture inside the bar that
+-- previews predicted post-heal HP, fed by Ascension's backported
+-- UnitGetIncomingHeals API).
+--
+-- Public extensions added by Build:
+--   frame.SetPressure(self, state, ttd) — called by the pressure module
+--                                          on each tick. Updates halo,
+--                                          TTD readout, and triggers a
+--                                          critical-entry sound when
+--                                          the state transitions into
+--                                          critical.
 
 local _, ns = ...
 local HealthBar = {}
+
+----------------------------------------------------------------
+-- Halo state map
+----------------------------------------------------------------
+--
+-- Each pressure state maps to a halo color, a base alpha, and an
+-- optional pulse period (seconds). State `none` means "no halo at all";
+-- `healing` is the only state that does NOT pulse despite being highly
+-- visible — it is good news, not a warning.
+
+local STATE_HALO = {
+    healing  = { colorKey = "haloHealing",  alpha = 0.45 },
+    none     = nil,
+    light    = { colorKey = "haloLight",    alpha = 0.25 },
+    warning  = { colorKey = "haloWarning",  alpha = 0.55, pulsePeriod = 1.5 },
+    critical = { colorKey = "haloCritical", alpha = 0.75, pulsePeriod = 0.5 },
+}
+
+----------------------------------------------------------------
+-- Widget interface
+----------------------------------------------------------------
 
 function HealthBar.IsAvailable()
     return true
@@ -34,6 +66,50 @@ local function formatHP(cur, max)
     return cur .. " / " .. max .. "  " .. pct .. "%"
 end
 
+----------------------------------------------------------------
+-- Incoming heal segment (Ascension backported UnitGetIncomingHeals)
+----------------------------------------------------------------
+
+local function refreshIncomingHeal(frame)
+    local seg = frame and frame.healSegment
+    if not seg then return end
+    if not UnitGetIncomingHeals then
+        seg:Hide()
+        return
+    end
+    local incoming = UnitGetIncomingHeals("player") or 0
+    if incoming <= 0 then
+        seg:Hide()
+        return
+    end
+    local cur = UnitHealth("player") or 0
+    local mx  = UnitHealthMax("player") or 1
+    if mx < 1 then mx = 1 end
+    local barWidth  = frame:GetWidth() or 0
+    local barHeight = frame:GetHeight() or 0
+    if barWidth < 1 or barHeight < 1 then
+        seg:Hide()
+        return
+    end
+    local fillFrac = cur / mx
+    if fillFrac > 1 then fillFrac = 1 end
+    local healFrac = incoming / mx
+    if healFrac + fillFrac > 1 then healFrac = 1 - fillFrac end
+    if healFrac <= 0 then
+        seg:Hide()
+        return
+    end
+    seg:ClearAllPoints()
+    seg:SetPoint("TOPLEFT",    frame, "TOPLEFT",    fillFrac * barWidth, 0)
+    seg:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", fillFrac * barWidth, 0)
+    seg:SetWidth(healFrac * barWidth)
+    seg:Show()
+end
+
+----------------------------------------------------------------
+-- Refresh
+----------------------------------------------------------------
+
 local function refresh(frame)
     if not frame then return end
     local cur = UnitHealth("player") or 0
@@ -41,21 +117,34 @@ local function refresh(frame)
     frame:SetMinMaxValues(0, math.max(1, max))
     frame:SetValue(cur)
     if frame.text then frame.text:SetText(formatHP(cur, max)) end
+    refreshIncomingHeal(frame)
 end
 
 HealthBar.Refresh = refresh
+
+----------------------------------------------------------------
+-- Event handler
+----------------------------------------------------------------
 
 local function onEvent(self, event, unit)
     if event == "PLAYER_ENTERING_WORLD" then
         refresh(self)
         return
     end
+    if event == "UNIT_HEAL_PREDICTION" then
+        if unit == "player" then refreshIncomingHeal(self) end
+        return
+    end
     if unit ~= "player" then return end
     refresh(self)
 end
 
-local function makePixel(parent, layer)
-    local t = parent:CreateTexture(nil, layer or "OVERLAY")
+----------------------------------------------------------------
+-- Border / chrome helpers
+----------------------------------------------------------------
+
+local function makePixel(parent, layer, sublevel)
+    local t = parent:CreateTexture(nil, layer or "OVERLAY", nil, sublevel)
     t:SetTexture(ns.Theme.backgroundTexture)
     return t
 end
@@ -84,6 +173,96 @@ local function buildBorder(frame, borderC)
     rgt:SetWidth(1)
 end
 
+----------------------------------------------------------------
+-- Halo (pressure state visual)
+----------------------------------------------------------------
+
+local HALO_OUTSET = 4
+
+local function buildHalo(parent)
+    local halo = CreateFrame("Frame", nil, parent)
+    halo:SetPoint("TOPLEFT",     parent, "TOPLEFT",     -HALO_OUTSET,  HALO_OUTSET)
+    halo:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT",  HALO_OUTSET, -HALO_OUTSET)
+    halo:SetBackdrop({
+        edgeFile = ns.Theme.backgroundTexture,
+        edgeSize = HALO_OUTSET,
+    })
+    halo:SetBackdropBorderColor(0, 0, 0, 0)
+    halo._color       = nil
+    halo._baseAlpha   = 0
+    halo._pulsePeriod = nil
+    halo._pulseAccum  = 0
+    -- Pulse: OnUpdate modulates alpha via sine wave when pulsePeriod is
+    -- set. Documented carve-out from CLAUDE.md hard rule #3 alongside the
+    -- energy widget poll. ~30 Hz on at most a few halo frames is
+    -- effectively free (~0.01% CPU).
+    halo:SetScript("OnUpdate", function(self, elapsed)
+        if not self._pulsePeriod or not self._color then return end
+        self._pulseAccum = (self._pulseAccum or 0) + elapsed
+        local p = self._pulseAccum % self._pulsePeriod
+        local progress = p / self._pulsePeriod
+        local pulse = 0.5 + 0.5 * math.sin(progress * 2 * math.pi)
+        local alpha = self._baseAlpha * (0.5 + 0.5 * pulse)
+        local c = self._color
+        self:SetBackdropBorderColor(c[1], c[2], c[3], alpha)
+    end)
+    return halo
+end
+
+local function applyHaloState(halo, state)
+    local cfg = STATE_HALO[state]
+    if not cfg then
+        halo._color       = nil
+        halo._baseAlpha   = 0
+        halo._pulsePeriod = nil
+        halo:SetBackdropBorderColor(0, 0, 0, 0)
+        return
+    end
+    local color = ns.Theme.colors[cfg.colorKey] or { 1, 1, 1, 1 }
+    halo._color       = color
+    halo._baseAlpha   = cfg.alpha
+    halo._pulsePeriod = cfg.pulsePeriod
+    halo._pulseAccum  = 0
+    halo:SetBackdropBorderColor(color[1], color[2], color[3], cfg.alpha)
+end
+
+----------------------------------------------------------------
+-- TTD readout + critical sound
+----------------------------------------------------------------
+
+local function applyTTDText(frame, state, ttd)
+    local txt = frame.ttdText
+    if not txt then return end
+    if state == "warning" or state == "critical" then
+        txt:SetText(ttd and ("%.1fs"):format(ttd) or "")
+        if state == "critical" then
+            local c = ns.Theme.colors.haloCritical
+            txt:SetTextColor(c[1], c[2], c[3], 1)
+        else
+            local c = ns.Theme.colors.haloWarning
+            txt:SetTextColor(c[1], c[2], c[3], 1)
+        end
+        txt:Show()
+    else
+        txt:Hide()
+    end
+end
+
+local function maybePlayCriticalSound(frame, state)
+    if state ~= "critical" then return end
+    if frame._lastState == "critical" then return end
+    if not (AegisDB and AegisDB.pressure and AegisDB.pressure.soundOnCritical) then
+        return
+    end
+    -- "RaidWarning" is a built-in Blizzard sound name; falls back silently
+    -- if missing on a private server build.
+    PlaySound("RaidWarning")
+end
+
+----------------------------------------------------------------
+-- Build
+----------------------------------------------------------------
+
 function HealthBar.Build(parent, orientation, style)
     local Theme = ns.Theme
     local w, h = HealthBar.GetPreferredSize(orientation)
@@ -104,6 +283,15 @@ function HealthBar.Build(parent, orientation, style)
     local bgC = Theme.colors.bgDark
     bg:SetVertexColor(bgC[1], bgC[2], bgC[3], bgC[4])
 
+    -- Incoming-heal preview segment. Sits on ARTWORK above the bar fill
+    -- (which the StatusBar draws on ARTWORK at sublevel 0).
+    local seg = frame:CreateTexture(nil, "ARTWORK", nil, 1)
+    seg:SetTexture(Theme.statusBarTexture)
+    local hi = Theme.colors.healthIncoming
+    seg:SetVertexColor(hi[1], hi[2], hi[3], hi[4])
+    seg:Hide()
+    frame.healSegment = seg
+
     buildBorder(frame, Theme.colors.border)
 
     frame.text = frame:CreateFontString(nil, "OVERLAY")
@@ -112,8 +300,28 @@ function HealthBar.Build(parent, orientation, style)
     local tw = Theme.colors.textWhite
     frame.text:SetTextColor(tw[1], tw[2], tw[3], tw[4])
 
+    -- TTD readout: shown only in warning/critical, anchored to the right
+    -- of the bar so the centered HP text stays uncluttered.
+    local ttdText = frame:CreateFontString(nil, "OVERLAY")
+    ttdText:SetFont(Theme.font, Theme.fontSize - 1, Theme.fontFlags)
+    ttdText:SetPoint("LEFT", frame, "RIGHT", 6, 0)
+    ttdText:Hide()
+    frame.ttdText = ttdText
+
+    frame.halo = buildHalo(frame)
+
+    -- Public method: pressure module pushes state every 0.25s.
+    frame.SetPressure = function(self, state, ttd)
+        if not state then state = "none" end
+        applyHaloState(self.halo, state)
+        applyTTDText(self, state, ttd)
+        maybePlayCriticalSound(self, state)
+        self._lastState = state
+    end
+
     frame:RegisterEvent("UNIT_HEALTH")
     frame:RegisterEvent("UNIT_MAXHEALTH")
+    frame:RegisterEvent("UNIT_HEAL_PREDICTION")
     frame:RegisterEvent("PLAYER_ENTERING_WORLD")
     frame:SetScript("OnEvent", onEvent)
 
@@ -125,6 +333,12 @@ function HealthBar.Destroy(frame)
     if not frame then return end
     frame:UnregisterAllEvents()
     frame:SetScript("OnEvent", nil)
+    if frame.halo then
+        frame.halo:SetScript("OnUpdate", nil)
+        frame.halo:Hide()
+        frame.halo:SetParent(nil)
+        frame.halo = nil
+    end
     frame:Hide()
     frame:SetParent(nil)
 end

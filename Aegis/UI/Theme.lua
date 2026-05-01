@@ -12,7 +12,8 @@ end
 
 Theme.colors = {
     -- Bar fills
-    health       = rgb(0x1E, 0xD7, 0x60),       -- #1ED760
+    health         = rgb(0x1E, 0xD7, 0x60),     -- #1ED760
+    healthIncoming = rgb(0x60, 0xFF, 0xA0, 0.6),-- light mint, the predicted-heal segment
     mana         = rgb(0x3F, 0x8E, 0xFF),       -- #3F8EFF
     rage         = rgb(0xE8, 0x41, 0x41),       -- #E84141
     energy       = rgb(0xFF, 0xD9, 0x3B),       -- #FFD93B
