@@ -230,11 +230,19 @@ end
 -- TTD readout + critical sound
 ----------------------------------------------------------------
 
+local function formatTTD(ttd)
+    if not ttd then return "TTD ?" end
+    if ttd < 10 then
+        return ("TTD %.1fs"):format(ttd)
+    end
+    return ("TTD %ds"):format(math.floor(ttd + 0.5))
+end
+
 local function applyTTDText(frame, state, ttd)
     local txt = frame.ttdText
     if not txt then return end
     if state == "warning" or state == "critical" then
-        txt:SetText(ttd and ("%.1fs"):format(ttd) or "")
+        txt:SetText(formatTTD(ttd))
         if state == "critical" then
             local c = ns.Theme.colors.haloCritical
             txt:SetTextColor(c[1], c[2], c[3], 1)
@@ -300,11 +308,16 @@ function HealthBar.Build(parent, orientation, style)
     local tw = Theme.colors.textWhite
     frame.text:SetTextColor(tw[1], tw[2], tw[3], tw[4])
 
-    -- TTD readout: shown only in warning/critical, anchored to the right
-    -- of the bar so the centered HP text stays uncluttered.
+    -- TTD readout: shown only in warning/critical. Anchored INSIDE the
+    -- bar's right edge so it stays visible regardless of how the block
+    -- is laid out (an earlier draft anchored it just outside the bar's
+    -- right edge, which made it disappear off the edge of left-side
+    -- blocks). Right-justified so the seconds digit stays put as TTD
+    -- changes magnitude.
     local ttdText = frame:CreateFontString(nil, "OVERLAY")
-    ttdText:SetFont(Theme.font, Theme.fontSize - 1, Theme.fontFlags)
-    ttdText:SetPoint("LEFT", frame, "RIGHT", 6, 0)
+    ttdText:SetFont(Theme.font, Theme.fontSize + 2, Theme.fontFlags)
+    ttdText:SetPoint("RIGHT", frame, "RIGHT", -4, 0)
+    ttdText:SetJustifyH("RIGHT")
     ttdText:Hide()
     frame.ttdText = ttdText
 
@@ -313,6 +326,21 @@ function HealthBar.Build(parent, orientation, style)
     -- Public method: pressure module pushes state every 0.25s.
     frame.SetPressure = function(self, state, ttd)
         if not state then state = "none" end
+        -- Halo is in-combat only by default. Out of combat the player has
+        -- no actionable use for a colored halo (the residual sliding-
+        -- window data still ages out for a few seconds after combat
+        -- ends; without this gate the halo would briefly remain colored
+        -- post-combat).
+        local v = (AegisDB and AegisDB.visual) or {}
+        local hideForOOC = (v.haloInCombatOnly ~= false) and not InCombatLockdown()
+        if hideForOOC then
+            applyHaloState(self.halo, "none")
+            if self.ttdText then self.ttdText:Hide() end
+            -- Keep _lastState updated so the in-combat re-entry knows
+            -- the prior state for sound triggering.
+            self._lastState = state
+            return
+        end
         applyHaloState(self.halo, state)
         applyTTDText(self, state, ttd)
         maybePlayCriticalSound(self, state)

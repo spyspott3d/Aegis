@@ -25,6 +25,11 @@ local accountDefaults = {
         },
         soundOnCritical = false,
         hysteresisSeconds = 0.5,
+        -- Entering "healing" requires this many seconds of sustained
+        -- HPS_in > DPS_in. Longer than the general hysteresis so a brief
+        -- heal tick mid-fight does not flip the halo from red to blue
+        -- before the next mob attack lands.
+        healingSustainTime = 1.5,
     },
     visual = {
         scale = 1.0,
@@ -32,6 +37,11 @@ local accountDefaults = {
         showHealthText = "value_and_percent",
         font = "Friz Quadrata TT",
         defaultBlockStyle = "standard", -- standard | glossy
+        -- Pressure halo around the health widget shows only while in
+        -- combat by default. Set to false to keep the halo visible
+        -- out of combat too (rarely useful in practice — sliding-window
+        -- data ages out and the halo just lingers post-fight).
+        haloInCombatOnly = true,
     },
 }
 

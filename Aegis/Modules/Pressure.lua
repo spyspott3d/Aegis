@@ -75,13 +75,20 @@ local STATE_RANK = {
 -- Public state (session-based for display widgets)
 ----------------------------------------------------------------
 
-Pressure.state   = "none"
-Pressure.ttd     = nil
-Pressure.dps_in  = 0  -- session: total damage taken / combat elapsed
-Pressure.hps_in  = 0
-Pressure.dps_out = 0
-Pressure.hps_out = 0
-Pressure.debug   = false
+Pressure.state        = "none"
+Pressure.ttd          = nil  -- raw, used for state thresholds
+Pressure.ttd_smoothed = nil  -- EMA-smoothed, used for display
+Pressure.dps_in       = 0    -- session: total damage taken / combat elapsed
+Pressure.hps_in       = 0
+Pressure.dps_out      = 0
+Pressure.hps_out      = 0
+Pressure.debug        = false
+
+-- EMA smoothing factor for the displayed TTD (per 0.25s tick). At 0.3,
+-- the smoothed value reaches ~95% of a constant raw within ~2 seconds.
+-- The state machine still uses raw Pressure.ttd so thresholds remain
+-- responsive to bursts; only the visible number is smoothed.
+local TTD_SMOOTH_ALPHA = 0.3
 
 function Pressure.GetIncomingDPS()  return Pressure.dps_in  end
 function Pressure.GetIncomingHPS()  return Pressure.hps_in  end
@@ -286,8 +293,18 @@ local function transition(rawState)
         Pressure.state = rawState
         lastValidTime = now
     else
-        local hyst = (AegisDB and AegisDB.pressure
-            and AegisDB.pressure.hysteresisSeconds) or 0.5
+        -- Less-severe transition: requires the new state to be sustained.
+        -- "healing" needs a longer sustain than other downgrades because a
+        -- single heal tick mid-combat would otherwise flip the halo from
+        -- red/orange to blue for one or two ticks before the next mob hit
+        -- snaps it back. The user wants a stable signal, so healing
+        -- requires hps > dps to hold for healingSustainTime seconds before
+        -- it commits.
+        local p = (AegisDB and AegisDB.pressure) or {}
+        local hyst = p.hysteresisSeconds or 0.5
+        if rawState == "healing" then
+            hyst = p.healingSustainTime or 1.5
+        end
         if now - lastValidTime >= hyst then
             Pressure.state = rawState
             lastValidTime = now
@@ -404,15 +421,29 @@ local function recompute()
     -- five-tier hybrid drain+TTD logic.
     transition(deriveRawState())
 
+    -- TTD smoothing for the visible readout. Pressure.ttd is whatever
+    -- deriveRawState just produced (raw, jumpy as the 4s window
+    -- shifts); ttd_smoothed is what the user reads.
+    if Pressure.ttd then
+        if Pressure.ttd_smoothed then
+            Pressure.ttd_smoothed = TTD_SMOOTH_ALPHA * Pressure.ttd
+                + (1 - TTD_SMOOTH_ALPHA) * Pressure.ttd_smoothed
+        else
+            Pressure.ttd_smoothed = Pressure.ttd
+        end
+    else
+        Pressure.ttd_smoothed = nil
+    end
+
     -- Push state to every health widget across all blocks. The widget
     -- module attaches a SetPressure method to each frame at Build time
-    -- (see Widgets/HealthBar.lua).
+    -- (see Widgets/HealthBar.lua). Display the smoothed TTD.
     if ns.BlockManager and ns.BlockManager.GetWidgetsByType then
         local frames = ns.BlockManager.GetWidgetsByType("health")
         for i = 1, #frames do
             local f = frames[i]
             if f.SetPressure then
-                f:SetPressure(Pressure.state, Pressure.ttd)
+                f:SetPressure(Pressure.state, Pressure.ttd_smoothed)
             end
         end
     end
@@ -435,8 +466,9 @@ local function printDebug()
         local mx = UnitHealthMax("player") or 1
         if mx >= 1 then drain = (netLoss / mx) * 100 end
     end
-    print(("|cff1ED760Aegis|r pressure: state=%s ttd=%s drain=%.2f%%/s [%s]"):format(
+    print(("|cff1ED760Aegis|r pressure: state=%s ttd=%s (raw %s) drain=%.2f%%/s [%s]"):format(
         Pressure.state,
+        Pressure.ttd_smoothed and ("%.1fs"):format(Pressure.ttd_smoothed) or "nil",
         Pressure.ttd and ("%.1fs"):format(Pressure.ttd) or "nil",
         drain,
         combatStatusLabel()))
