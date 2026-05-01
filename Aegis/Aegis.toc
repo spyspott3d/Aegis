@@ -8,4 +8,8 @@
 ## X-Website: https://github.com/spyspott3d/Aegis
 ## X-License: MIT
 
-Core\Aegis.lua
+Core\Util.lua
+Core\Config.lua
+UI\Theme.lua
+UI\Anchor.lua
+Core\Init.lua
