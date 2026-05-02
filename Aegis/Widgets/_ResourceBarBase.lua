@@ -69,20 +69,43 @@ function Base.MakeWidget(config)
     end
 
     function Widget.GetPreferredSize(orientation)
+        -- Match HealthBar's footprint exactly (150x22 wide, 22x100 tall) so
+        -- mana/rage/energy/runic align cleanly with health when packed in
+        -- the same block. Older versions used a smaller resource bar
+        -- (150x14 / 16x80) which made the column ragged.
         if orientation == "vertical" then
-            return 16, 80
+            return 22, 100
         end
-        return 150, 14
+        return 150, 22
     end
 
-    local function showText()
+    local function readFormat()
         local v = AegisDB and AegisDB.visual
-        if not v then return true end
+        if not v then return "value_and_percent" end
         local key = config.showTextKey
-        if not key then return true end
+        if not key then return "value_and_percent" end
         local val = v[key]
-        if val == nil then return true end
-        return val ~= false
+        if val == nil then return "value_and_percent" end
+        -- Defensive: accept legacy booleans in case migration somehow
+        -- skipped (e.g., AegisDB on disk written by a v4 client).
+        if val == true  then return "value_and_percent" end
+        if val == false then return "none" end
+        return val
+    end
+
+    local function formatValue(cur, max)
+        local fmt = readFormat()
+        if fmt == "none" then return "" end
+        if not cur or cur < 0 then cur = 0 end
+        if not max or max < 1 then return tostring(cur) end
+        if fmt == "value" then
+            return tostring(cur)
+        elseif fmt == "percent" then
+            local pct = math.floor((cur / max) * 100 + 0.5)
+            return pct .. "%"
+        end
+        local pct = math.floor((cur / max) * 100 + 0.5)
+        return cur .. " / " .. max .. "  " .. pct .. "%"
     end
 
     local function refresh(frame)
@@ -92,13 +115,7 @@ function Base.MakeWidget(config)
         frame:SetMinMaxValues(0, math.max(1, max))
         frame:SetValue(cur)
         if frame.text then
-            if not showText() then
-                frame.text:SetText("")
-            elseif max <= 0 then
-                frame.text:SetText("0")
-            else
-                frame.text:SetText(cur .. " / " .. max)
-            end
+            frame.text:SetText(formatValue(cur, max))
         end
     end
 

@@ -48,7 +48,7 @@ read_globals = {
     "UIDropDownMenu_SetWidth", "UIDropDownMenu_Initialize",
     "UIDropDownMenu_CreateInfo", "UIDropDownMenu_AddButton",
     "UIDropDownMenu_SetSelectedValue", "UIDropDownMenu_SetText",
-    "UIDropDownMenu_GetSelectedValue",
+    "UIDropDownMenu_GetSelectedValue", "CloseDropDownMenus",
 
     -- Slash commands (SlashCmdList is in `globals` because we write to it)
     "ChatEdit_FocusActiveWindow", "ChatFrame_OpenChat",

@@ -7,10 +7,10 @@ local _, ns = ...
 ns.Config = ns.Config or {}
 local Config = ns.Config
 
-Config.SCHEMA_VERSION = 4
+Config.SCHEMA_VERSION = 8
 
 local accountDefaults = {
-    version = 4,
+    version = 8,
     pressure = {
         windowSeconds = 4,
         thresholds = {
@@ -36,14 +36,16 @@ local accountDefaults = {
         outOfCombatAlpha = 0.3,
         -- value | percent | value_and_percent | none
         showHealthText = "value_and_percent",
-        -- Per-bar "current / max" toggles. Each resource bar reads its own
-        -- key so the user can hide text on, say, the rage bar while keeping
-        -- it on the mana bar. The legacy showResourceText (v3) was a single
-        -- global toggle — migrated v3 -> v4 onto these fields.
-        showManaText  = true,
-        showRageText  = true,
-        showEnergyText = true,
-        showRunicText = true,
+        -- Per-bar text format. Each resource bar reads its own key so the
+        -- user can hide text on, say, the rage bar while keeping a percent
+        -- readout on the mana bar. Values mirror showHealthText:
+        --   value | percent | value_and_percent | none
+        -- v4 stored these as booleans (true/false); v5 migrated them to
+        -- strings — true -> "value_and_percent", false -> "none".
+        showManaText   = "value_and_percent",
+        showRageText   = "value_and_percent",
+        showEnergyText = "value_and_percent",
+        showRunicText  = "value_and_percent",
         -- Combo points: render the integer count as a small label next to
         -- the filled pips, in addition to the pips themselves.
         showComboCount = false,
@@ -60,6 +62,10 @@ local accountDefaults = {
 -- Default blocks installed on a fresh character (or after /ae reset). Per
 -- SPEC.md "Default install": two blocks symmetric around screen center,
 -- mirroring the player character.
+-- Default install: two blocks symmetric around screen center, mirroring the
+-- player character. Each block uses orientation = "horizontal" — meaning the
+-- BARS are horizontal (wide, 150x22) and the block packs them top-to-bottom.
+-- (v6 briefly inverted this convention; v7 reverts it to the original.)
 local defaultBlocks = {
     {
         id = "left",
@@ -72,6 +78,7 @@ local defaultBlocks = {
         orientation = "horizontal",
         style = "standard",
         scale = 1.0,
+        gap = 4,
         widgets = { "combo", "health", "mana" },
     },
     {
@@ -85,6 +92,7 @@ local defaultBlocks = {
         orientation = "horizontal",
         style = "standard",
         scale = 1.0,
+        gap = 4,
         widgets = { "rage", "energy", "runic" },
     },
 }
@@ -164,6 +172,42 @@ local accountMigrations = {
         end
         db.version = 4
     end,
+    [5] = function(db)
+        -- v4 -> v5: per-bar text toggles upgrade from boolean to format string,
+        -- matching showHealthText. Old true => "value_and_percent" (the v4
+        -- behaviour was always "current / max"), old false => "none". Strings
+        -- already in place pass through.
+        if db.visual then
+            local keys = { "showManaText", "showRageText", "showEnergyText", "showRunicText" }
+            for _, k in ipairs(keys) do
+                local cur = db.visual[k]
+                if cur == true then
+                    db.visual[k] = "value_and_percent"
+                elseif cur == false then
+                    db.visual[k] = "none"
+                end
+            end
+        end
+        db.version = 5
+    end,
+    [6] = function(db)
+        -- v5 -> v6: no account-side changes (block orientation lives on the
+        -- per-character DB; see charMigrations[6]). Bump only.
+        db.version = 6
+    end,
+    [7] = function(db)
+        -- v6 -> v7: no account-side changes; the v7 work is on the
+        -- per-character DB (orientation labels reverted). Bump only.
+        db.version = 7
+    end,
+    [8] = function(db)
+        -- v7 -> v8: per-block `gap` field added to AegisDBChar.blocks. The
+        -- defaults pass writes the missing field on existing blocks via the
+        -- new `gap = 4` in defaultBlocks (matches the old hardcoded
+        -- WIDGET_GAP, so visuals are unchanged for users who don't touch it).
+        -- No account-side change here.
+        db.version = 8
+    end,
 }
 
 local charMigrations = {
@@ -184,6 +228,60 @@ local charMigrations = {
     [4] = function(db)
         -- v3 -> v4: no per-character changes; bump only.
         db.version = 4
+    end,
+    [5] = function(db)
+        -- v4 -> v5: no per-character changes; bump only.
+        db.version = 5
+    end,
+    [6] = function(db)
+        -- v5 -> v6: orientation labels were inverted vs the user's mental
+        -- model (old "horizontal" = horizontal bars stacked vertically;
+        -- old "vertical" = vertical bars side-by-side). v6 swaps the labels
+        -- so "vertical" means widgets stack top-to-bottom and "horizontal"
+        -- means widgets sit side-by-side. Existing blocks have their
+        -- orientation flipped so the on-screen layout is unchanged.
+        if db.blocks then
+            for _, b in ipairs(db.blocks) do
+                if b.orientation == "horizontal" then
+                    b.orientation = "vertical"
+                elseif b.orientation == "vertical" then
+                    b.orientation = "horizontal"
+                end
+            end
+        end
+        db.version = 6
+    end,
+    [7] = function(db)
+        -- v6 -> v7: REVERT the v6 swap. The v6 convention turned out to
+        -- conflict with the user's mental model where "horizontal" describes
+        -- the BAR shape (horizontal = wide bars stacked vertically;
+        -- vertical = tall bars side-by-side). For data that was migrated
+        -- through v6, this flip restores the pre-v6 value. For data that
+        -- skipped v6 (e.g. fresh install at v7 reading an older saved
+        -- variable that never went through v6), the flip is the identity
+        -- they came in with. Either way the on-screen layout is preserved
+        -- because Block:Layout was reverted in lockstep with this migration.
+        if db.blocks then
+            for _, b in ipairs(db.blocks) do
+                if b.orientation == "horizontal" then
+                    b.orientation = "vertical"
+                elseif b.orientation == "vertical" then
+                    b.orientation = "horizontal"
+                end
+            end
+        end
+        db.version = 7
+    end,
+    [8] = function(db)
+        -- v7 -> v8: per-block `gap` (px between widgets in the layout). The
+        -- defaults pass adds gap=4 on each existing block so the on-screen
+        -- spacing is unchanged for blocks the user never touches.
+        if db.blocks then
+            for _, b in ipairs(db.blocks) do
+                if b.gap == nil then b.gap = 4 end
+            end
+        end
+        db.version = 8
     end,
 }
 

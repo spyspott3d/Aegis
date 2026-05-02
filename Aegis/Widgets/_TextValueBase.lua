@@ -26,6 +26,11 @@ local TICK = 0.25
 function Base.MakeWidget(config)
     local Widget = {}
 
+    -- Marker read by Block:Layout() to stack consecutive text widgets in the
+    -- minor axis instead of placing them along the block's main flow. See the
+    -- comment in Blocks/Block.lua for the layout rule.
+    Widget.kind = "text"
+
     function Widget.IsAvailable() return true end
 
     function Widget.GetPreferredSize(orientation)

@@ -134,6 +134,7 @@ local function addBlock(args)
         orientation = orientation,
         style       = (AegisDB.visual and AegisDB.visual.defaultBlockStyle) or "standard",
         scale       = 1.0,
+        gap         = 4,
         widgets     = widgets,
     }
     AegisDBChar.blocks = AegisDBChar.blocks or {}
@@ -173,6 +174,8 @@ local function blockHelp()
     print(colorize("Aegis", "1ED760") .. " block commands:")
     print("  /ae block list                                 - list all blocks")
     print("  /ae block add <h|v> <widget1> [widget2] ...    - create a block at screen center")
+    print("    h = horizontal bars (wide, 150x22) stacked top-to-bottom")
+    print("    v = vertical bars   (tall, 22x100) side-by-side")
     print("  /ae block remove <id>                          - delete a block by id")
     print("  Available widgets: " .. table.concat(catalogIds(), ", "))
 end

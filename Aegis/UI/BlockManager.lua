@@ -69,3 +69,42 @@ function BM.GetWidgetsByType(typeId)
 end
 
 function BM.GetBlocks() return blocks end
+
+-- Find the live Block instance whose config.id matches `id`. Returns nil if
+-- the user just removed it from AegisDBChar.blocks but Build() has not run yet.
+function BM.GetBlockByConfigId(id)
+    if not id then return nil end
+    for _, b in ipairs(blocks) do
+        if b.config and b.config.id == id then return b end
+    end
+    return nil
+end
+
+-- Push a Refresh() call to every live widget. Used by the settings dialog
+-- after the user changes a visual toggle so the change is visible without
+-- waiting for the next event tick (text format dropdowns, combo count, etc).
+function BM.RefreshAllWidgets()
+    for _, b in ipairs(blocks) do
+        if b.widgets then
+            for _, w in ipairs(b.widgets) do
+                if w.widget and w.widget.Refresh and w.frame then
+                    w.widget.Refresh(w.frame)
+                end
+            end
+        end
+    end
+end
+
+-- Rebuild a single block in place after its config (orientation, style,
+-- widget list, scale) was edited. Cheaper than BM.Build() when only one
+-- block changed; avoids flickering the others. Falls back to full Build()
+-- if the block is not yet alive.
+function BM.RebuildBlock(id)
+    local b = BM.GetBlockByConfigId(id)
+    if not b then
+        BM.Build()
+        return
+    end
+    b:Layout()
+    b:applyPosition()
+end

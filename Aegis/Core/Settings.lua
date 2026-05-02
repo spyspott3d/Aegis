@@ -6,12 +6,16 @@
 -- Three tabs:
 --   Pressure - thresholds (TTD ladders, drain ladders, hysteresis,
 --              healing sustain) and the critical-entry sound toggle.
---   Visual   - per-bar text toggles (mana, rage, energy, runic), HP
---              format dropdown, combo count overlay, halo OOC gating,
---              default block style.
---   Blocks   - row list of installed blocks (one row per block, with
---              its id, position, orientation/style, widget list, and a
---              Delete button), plus Add/Reset action buttons.
+--   Visual   - per-bar text-format dropdowns (HP, mana, rage, energy,
+--              runic), combo count overlay, halo OOC gating, and the
+--              default style for newly-created blocks. Setters call
+--              notify() so changes appear live on the HUD without /rl.
+--   Blocks   - per-row block editor: orientation toggle, style
+--              dropdown, Delete button, widget chip strip with
+--              reorder (`<` `>`) and remove (`x`) controls, and a
+--              `+ Add widget` dropdown. Footer adds an empty block,
+--              toggles drag mode (Move blocks / Lock positions), and
+--              resets to the default layout.
 --
 -- The dialog is parented to UIParent (not registered with the Blizzard
 -- Interface Options framework) for full layout control. Escape closes
@@ -26,6 +30,20 @@ S.tabOrder = {}
 S.refreshHandlers = {}
 
 local SETTINGS_FRAME_NAME = "AegisSettingsFrame"
+
+----------------------------------------------------------------
+-- Notify: push a refresh to every live widget so visual setting
+-- changes (text format, combo count, ...) appear immediately
+-- instead of waiting for the next event tick. Block-structure
+-- changes (orientation/style/widget list) call BlockManager.RebuildBlock
+-- directly, not this.
+----------------------------------------------------------------
+
+local function notify()
+    if ns.BlockManager and ns.BlockManager.RefreshAllWidgets then
+        ns.BlockManager.RefreshAllWidgets()
+    end
+end
 
 ----------------------------------------------------------------
 -- Refresh + tab registry
@@ -205,7 +223,7 @@ local TAB_PADDING    = 24
 local TAB_MIN_WIDTH  = 60
 local TAB_GAP        = 4
 local FRAME_SIDE_MARGIN = 12
-local FRAME_MIN_WIDTH   = 480
+local FRAME_MIN_WIDTH   = 560
 
 local function buildTabs(f)
     if f.tabButtons then
@@ -267,7 +285,7 @@ local function createFrame()
     if S.frame then return S.frame end
 
     local f = CreateFrame("Frame", SETTINGS_FRAME_NAME, UIParent)
-    f:SetSize(FRAME_MIN_WIDTH, 480)
+    f:SetSize(FRAME_MIN_WIDTH, 520)
     f:SetPoint("CENTER")
     f:SetMovable(true)
     f:EnableMouse(true)
@@ -373,54 +391,64 @@ end
 -- Visual tab — per-bar settings
 ----------------------------------------------------------------
 
+local TEXT_FORMAT_OPTIONS = {
+    { key = "value",             text = "Value (1234)"      },
+    { key = "percent",           text = "Percent (47%)"     },
+    { key = "value_and_percent", text = "Value + Percent"   },
+    { key = "none",              text = "None (no text)"    },
+}
+
+local function readBarFormat(key)
+    local v = visual()[key]
+    if v == true  then return "value_and_percent" end
+    if v == false then return "none" end
+    return v or "value_and_percent"
+end
+
 local function buildVisualTab(parent)
     local hdr = makeHeader(parent, "Visual")
     hdr:SetPoint("TOPLEFT", parent, "TOPLEFT", 8, -4)
 
-    local healthFmt = makeDropdown(parent,
-        "Health bar text",
-        {
-            { key = "value",             text = "Value (1234)"        },
-            { key = "percent",           text = "Percent (47%)"       },
-            { key = "value_and_percent", text = "Value + Percent"     },
-            { key = "none",              text = "None (no text)"      },
-        },
-        function() return visual().showHealthText end,
-        function(v) visual().showHealthText = v end)
-    healthFmt:SetPoint("TOPLEFT", hdr, "BOTTOMLEFT", 0, -8)
+    -- Two columns of dropdowns: HP/Mana on the left, Rage/Energy/Runic on
+    -- the right. Each dropdown changes the text format of its bar live (no
+    -- /rl) by pushing a Refresh to all widgets after the value is set.
+    local hpDD = makeDropdown(parent, "Health bar text", TEXT_FORMAT_OPTIONS,
+        function() return readBarFormat("showHealthText") end,
+        function(v) visual().showHealthText = v; notify() end)
+    hpDD:SetPoint("TOPLEFT", hdr, "BOTTOMLEFT", 0, -8)
 
-    local cbMana = makeCheckbox(parent, "Show 'current / max' on mana bar",
-        function() return visual().showManaText ~= false end,
-        function(v) visual().showManaText = v end)
-    cbMana:SetPoint("TOPLEFT", healthFmt, "BOTTOMLEFT", 18, -4)
+    local manaDD = makeDropdown(parent, "Mana bar text", TEXT_FORMAT_OPTIONS,
+        function() return readBarFormat("showManaText") end,
+        function(v) visual().showManaText = v; notify() end)
+    manaDD:SetPoint("TOPLEFT", hpDD, "BOTTOMLEFT", 0, -10)
 
-    local cbRage = makeCheckbox(parent, "Show 'current / max' on rage bar",
-        function() return visual().showRageText ~= false end,
-        function(v) visual().showRageText = v end)
-    cbRage:SetPoint("TOPLEFT", cbMana, "BOTTOMLEFT", 0, -2)
+    local rageDD = makeDropdown(parent, "Rage bar text", TEXT_FORMAT_OPTIONS,
+        function() return readBarFormat("showRageText") end,
+        function(v) visual().showRageText = v; notify() end)
+    rageDD:SetPoint("TOPLEFT", manaDD, "BOTTOMLEFT", 0, -10)
 
-    local cbEnergy = makeCheckbox(parent, "Show 'current / max' on energy bar",
-        function() return visual().showEnergyText ~= false end,
-        function(v) visual().showEnergyText = v end)
-    cbEnergy:SetPoint("TOPLEFT", cbRage, "BOTTOMLEFT", 0, -2)
+    local energyDD = makeDropdown(parent, "Energy bar text", TEXT_FORMAT_OPTIONS,
+        function() return readBarFormat("showEnergyText") end,
+        function(v) visual().showEnergyText = v; notify() end)
+    energyDD:SetPoint("TOPLEFT", rageDD, "BOTTOMLEFT", 0, -10)
 
-    local cbRunic = makeCheckbox(parent, "Show 'current / max' on runic bar",
-        function() return visual().showRunicText ~= false end,
-        function(v) visual().showRunicText = v end)
-    cbRunic:SetPoint("TOPLEFT", cbEnergy, "BOTTOMLEFT", 0, -2)
+    local runicDD = makeDropdown(parent, "Runic power bar text", TEXT_FORMAT_OPTIONS,
+        function() return readBarFormat("showRunicText") end,
+        function(v) visual().showRunicText = v; notify() end)
+    runicDD:SetPoint("TOPLEFT", energyDD, "BOTTOMLEFT", 0, -10)
 
     local cbCombo = makeCheckbox(parent, "Show combo point count next to pips",
         function() return visual().showComboCount end,
-        function(v) visual().showComboCount = v end)
-    cbCombo:SetPoint("TOPLEFT", cbRunic, "BOTTOMLEFT", 0, -2)
+        function(v) visual().showComboCount = v; notify() end)
+    cbCombo:SetPoint("TOPLEFT", runicDD, "BOTTOMLEFT", 18, -2)
 
     local cbHaloOOC = makeCheckbox(parent, "Hide pressure halo out of combat",
         function() return visual().haloInCombatOnly end,
-        function(v) visual().haloInCombatOnly = v end)
-    cbHaloOOC:SetPoint("TOPLEFT", cbCombo, "BOTTOMLEFT", 0, -10)
+        function(v) visual().haloInCombatOnly = v; notify() end)
+    cbHaloOOC:SetPoint("TOPLEFT", cbCombo, "BOTTOMLEFT", 0, -2)
 
     local styleDD = makeDropdown(parent,
-        "Default block style (for /ae block add)",
+        "Default style for new blocks",
         {
             { key = "standard", text = "Standard (flat)"           },
             { key = "glossy",   text = "Glossy (gradient overlay)" },
@@ -431,99 +459,34 @@ local function buildVisualTab(parent)
 end
 
 ----------------------------------------------------------------
--- Blocks tab — row list
+-- Blocks tab — full per-block editor
 ----------------------------------------------------------------
+-- Each row is a block, rendered with two stripes:
+--   Top stripe:    id | position | orientation toggle | style dropdown | Delete
+--   Bottom stripe: Widgets:  [chip] [chip] ...  [+ Add ▼]
+-- Chip layout: [◀ widget_id ▶ ×]   ◀/▶ swap with neighbour, × removes.
+-- Every edit calls BlockManager.RebuildBlock(id) so the HUD updates live;
+-- structural changes (add/remove block) call BM.Build() once.
 
-local BLOCK_ROW_H = 36
-local BLOCK_ROW_PAD = 4
+local BLOCK_ROW_PAD      = 6
+local CHIP_W             = 80
+local CHIP_H             = 20
+local CHIP_GAP           = 4
+local CHIP_LINE_H        = CHIP_H + 4
+local TOP_STRIPE_H       = 28      -- id, pos, orient, style, delete
+local BOTTOM_STRIPE_H    = 28      -- + Add widget   |   Scale slider
+local CHIP_AREA_LEFT     = 64      -- margin + "Widgets:" label + gap
+local CHIP_AREA_RIGHT_PAD = 6      -- right margin inside the row
+local CHIP_AREA_W_FALLBACK = 440   -- before listHost has a real width
+local STYLE_OPTIONS = {
+    { key = "standard", text = "Standard (flat)"           },
+    { key = "glossy",   text = "Glossy (gradient overlay)" },
+}
 local blockRows = {}
-
-local function getBlockRow(parent, i)
-    if blockRows[i] then return blockRows[i] end
-    local row = CreateFrame("Frame", nil, parent)
-    row:SetHeight(BLOCK_ROW_H)
-    local bg = row:CreateTexture(nil, "BACKGROUND")
-    bg:SetTexture(0.08, 0.08, 0.08, 0.6)
-    bg:SetAllPoints()
-
-    local idFs = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    idFs:SetPoint("TOPLEFT", row, "TOPLEFT", 6, -4)
-    idFs:SetWidth(70)
-    idFs:SetJustifyH("LEFT")
-    row.id = idFs
-
-    local posFs = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    posFs:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 6, 4)
-    posFs:SetWidth(110)
-    posFs:SetJustifyH("LEFT")
-    row.pos = posFs
-
-    local widgetsFs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    widgetsFs:SetPoint("LEFT", idFs, "RIGHT", 6, 0)
-    widgetsFs:SetWidth(220)
-    widgetsFs:SetHeight(BLOCK_ROW_H - 8)
-    widgetsFs:SetJustifyH("LEFT")
-    widgetsFs:SetJustifyV("MIDDLE")
-    row.widgets = widgetsFs
-
-    local del = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-    del:SetSize(70, 22)
-    del:SetPoint("RIGHT", -4, 0)
-    del:SetText("Delete")
-    row.del = del
-
-    blockRows[i] = row
-    return row
-end
-
-local function refreshBlockRows(parent)
-    local blocks = AegisDBChar and AegisDBChar.blocks or {}
-    -- Hide all rows first; we re-show the ones we use.
-    for _, row in pairs(blockRows) do row:Hide() end
-
-    local cursor = 0
-    for i, b in ipairs(blocks) do
-        local row = getBlockRow(parent, i)
-        row:ClearAllPoints()
-        row:SetPoint("TOPLEFT",  parent, "TOPLEFT",  4, -cursor)
-        row:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -4, -cursor)
-        cursor = cursor + BLOCK_ROW_H + BLOCK_ROW_PAD
-
-        row.id:SetText(b.id or "?")
-
-        local p = b.position or {}
-        row.pos:SetText(("%s %+d,%+d"):format(
-            p.point or "?", p.xOffset or 0, p.yOffset or 0))
-
-        local widgets = (b.widgets and #b.widgets > 0)
-            and table.concat(b.widgets, ", ") or "(empty)"
-        local style = b.style or "standard"
-        local orient = (b.orientation == "vertical") and "vertical" or "horizontal"
-        row.widgets:SetText(("%s, %s\n%s"):format(orient, style, widgets))
-
-        local id = b.id
-        row.del:SetScript("OnClick", function()
-            if not id or not AegisDBChar.blocks then return end
-            for j = 1, #AegisDBChar.blocks do
-                if AegisDBChar.blocks[j].id == id then
-                    tremove(AegisDBChar.blocks, j)
-                    break
-                end
-            end
-            if ns.BlockManager and ns.BlockManager.Build then
-                ns.BlockManager.Build()
-            end
-            S.Refresh()
-        end)
-
-        row:Show()
-    end
-    return cursor
-end
 
 local function generateBlockId()
     local used = {}
-    if AegisDBChar.blocks then
+    if AegisDBChar and AegisDBChar.blocks then
         for _, b in ipairs(AegisDBChar.blocks) do
             if b.id then used[b.id] = true end
         end
@@ -533,30 +496,437 @@ local function generateBlockId()
     return "block" .. i
 end
 
+local function findBlockIndex(id)
+    if not (AegisDBChar and AegisDBChar.blocks and id) then return nil end
+    for i, b in ipairs(AegisDBChar.blocks) do
+        if b.id == id then return i end
+    end
+    return nil
+end
+
+local function rebuildOne(id)
+    if ns.BlockManager and ns.BlockManager.RebuildBlock then
+        ns.BlockManager.RebuildBlock(id)
+    end
+end
+
+----------------------------------------------------------------
+-- Widget chip (one per widget id inside a block)
+----------------------------------------------------------------
+
+local function makeChip(parent, blockId, slotIndex, widgetId)
+    local chip = CreateFrame("Frame", nil, parent)
+    chip:SetSize(CHIP_W, CHIP_H)
+
+    local bg = chip:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetTexture(0.18, 0.18, 0.20, 0.85)
+
+    local left = CreateFrame("Button", nil, chip)
+    left:SetSize(14, CHIP_H)
+    left:SetPoint("LEFT", chip, "LEFT", 0, 0)
+    left:SetNormalFontObject("GameFontHighlightSmall")
+    left:SetText("<")
+
+    local right = CreateFrame("Button", nil, chip)
+    right:SetSize(14, CHIP_H)
+    right:SetPoint("RIGHT", chip, "RIGHT", -16, 0)
+    right:SetNormalFontObject("GameFontHighlightSmall")
+    right:SetText(">")
+
+    local del = CreateFrame("Button", nil, chip)
+    del:SetSize(14, CHIP_H)
+    del:SetPoint("RIGHT", chip, "RIGHT", -1, 0)
+    del:SetNormalFontObject("GameFontRedSmall")
+    del:SetText("x")
+
+    local label = chip:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    label:SetPoint("LEFT", left, "RIGHT", 2, 0)
+    label:SetPoint("RIGHT", right, "LEFT", -2, 0)
+    label:SetJustifyH("CENTER")
+    label:SetText(widgetId)
+
+    local function swap(delta)
+        local idx = findBlockIndex(blockId)
+        if not idx then return end
+        local b = AegisDBChar.blocks[idx]
+        if not b.widgets then return end
+        local target = slotIndex + delta
+        if target < 1 or target > #b.widgets then return end
+        b.widgets[slotIndex], b.widgets[target] = b.widgets[target], b.widgets[slotIndex]
+        rebuildOne(blockId)
+        S.Refresh()
+    end
+
+    left:SetScript("OnClick", function() swap(-1) end)
+    right:SetScript("OnClick", function() swap(1)  end)
+    del:SetScript("OnClick", function()
+        local idx = findBlockIndex(blockId)
+        if not idx then return end
+        local b = AegisDBChar.blocks[idx]
+        if not b.widgets then return end
+        tremove(b.widgets, slotIndex)
+        rebuildOne(blockId)
+        S.Refresh()
+    end)
+
+    return chip
+end
+
+local function catalogIds()
+    local ids = {}
+    if ns.WidgetCatalog then
+        for k in pairs(ns.WidgetCatalog) do tinsert(ids, k) end
+        table.sort(ids)
+    end
+    return ids
+end
+
+-- Re-bind the row's persistent "+ Add widget" dropdown to the current block id.
+-- The dropdown frame itself is created once in getBlockRow; re-creating it on
+-- every refresh would leak global names (UIDropDownMenuTemplate requires a
+-- unique name per frame).
+local function bindAddDropdown(dd, blockId)
+    UIDropDownMenu_SetText(dd, "+ Add widget")
+    UIDropDownMenu_Initialize(dd, function()
+        for _, wid in ipairs(catalogIds()) do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text  = wid
+            info.value = wid
+            info.notCheckable = true
+            info.func = function()
+                local idx = findBlockIndex(blockId)
+                if not idx then return end
+                local b = AegisDBChar.blocks[idx]
+                b.widgets = b.widgets or {}
+                tinsert(b.widgets, wid)
+                rebuildOne(blockId)
+                S.Refresh()
+                CloseDropDownMenus()
+            end
+            UIDropDownMenu_AddButton(info)
+        end
+    end)
+end
+
+----------------------------------------------------------------
+-- Row factory: builds the persistent widgets that don't depend on
+-- the block's contents. The chip strip and add-dropdown are rebuilt
+-- per refresh because their handlers close over slot indices.
+----------------------------------------------------------------
+
+local function getBlockRow(parent, i)
+    if blockRows[i] then return blockRows[i] end
+    local row = CreateFrame("Frame", nil, parent)
+
+    local bg = row:CreateTexture(nil, "BACKGROUND")
+    bg:SetAllPoints()
+    bg:SetTexture(0.08, 0.08, 0.08, 0.6)
+
+    -- Top stripe: id | pos | orient | style | delete
+    row.id = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    row.id:SetPoint("TOPLEFT", row, "TOPLEFT", 6, -6)
+    row.id:SetWidth(54)
+    row.id:SetJustifyH("LEFT")
+
+    row.pos = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    row.pos:SetPoint("LEFT", row.id, "RIGHT", 4, 0)
+    row.pos:SetWidth(110)
+    row.pos:SetJustifyH("LEFT")
+
+    row.orient = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    row.orient:SetSize(56, 20)
+    row.orient:SetPoint("LEFT", row.pos, "RIGHT", 4, 0)
+
+    row.styleDD = CreateFrame("Frame", uniqName("BlockStyle"), row, "UIDropDownMenuTemplate")
+    row.styleDD:SetPoint("LEFT", row.orient, "RIGHT", -10, -2)
+    UIDropDownMenu_SetWidth(row.styleDD, 130)
+
+    row.del = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    row.del:SetSize(60, 20)
+    row.del:SetPoint("TOPRIGHT", row, "TOPRIGHT", -6, -6)
+    row.del:SetText("Delete")
+
+    -- Middle stripe: "Widgets:" label + chip area (variable height)
+    row.widgetsLabel = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    row.widgetsLabel:SetPoint("TOPLEFT", row, "TOPLEFT", 6, -(TOP_STRIPE_H + 2))
+    row.widgetsLabel:SetText("Widgets:")
+    row.widgetsLabel:SetWidth(54)
+
+    row.chipHost = CreateFrame("Frame", nil, row)
+    row.chipHost:SetPoint("TOPLEFT", row, "TOPLEFT", CHIP_AREA_LEFT, -TOP_STRIPE_H)
+    -- chipHost size set per-refresh based on chip count and row width.
+
+    -- Bottom stripe: + Add widget   |   Scale: [slider] xx%
+    row.addDD = CreateFrame("Frame", uniqName("BlockAdd"), row, "UIDropDownMenuTemplate")
+    UIDropDownMenu_SetWidth(row.addDD, 70)
+
+    row.scaleLabel = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    row.scaleLabel:SetText("Scale:")
+
+    row.scale = CreateFrame("Slider", uniqName("BlockScale"), row, "OptionsSliderTemplate")
+    row.scale:SetMinMaxValues(0.5, 2.0)
+    row.scale:SetValueStep(0.05)
+    if row.scale.SetObeyStepOnDrag then row.scale:SetObeyStepOnDrag(true) end
+    row.scale:SetWidth(100)
+    row.scale:SetHeight(14)
+    -- OptionsSliderTemplate creates Low/High/Text font strings; we don't want
+    -- the min/max labels on this compact slider.
+    local snm = row.scale:GetName()
+    if snm then
+        local lo, hi, tx = _G[snm .. "Low"], _G[snm .. "High"], _G[snm .. "Text"]
+        if lo then lo:SetText("") end
+        if hi then hi:SetText("") end
+        if tx then tx:SetText("") end
+    end
+
+    row.scaleValue = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    -- Fixed width so the slider's right edge does not jitter as the text
+    -- swings between "50%" and "200%" (FontStrings auto-size to content).
+    row.scaleValue:SetWidth(36)
+    row.scaleValue:SetJustifyH("RIGHT")
+
+    -- Per-block gap slider (px between widgets in the layout). Compact like
+    -- the scale slider; lives on the bottom stripe between Add and Scale.
+    row.gapLabel = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    row.gapLabel:SetText("Gap:")
+
+    row.gap = CreateFrame("Slider", uniqName("BlockGap"), row, "OptionsSliderTemplate")
+    row.gap:SetMinMaxValues(0, 30)
+    row.gap:SetValueStep(1)
+    if row.gap.SetObeyStepOnDrag then row.gap:SetObeyStepOnDrag(true) end
+    row.gap:SetWidth(60)
+    row.gap:SetHeight(14)
+    local gnm = row.gap:GetName()
+    if gnm then
+        local lo, hi, tx = _G[gnm .. "Low"], _G[gnm .. "High"], _G[gnm .. "Text"]
+        if lo then lo:SetText("") end
+        if hi then hi:SetText("") end
+        if tx then tx:SetText("") end
+    end
+
+    row.gapValue = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    row.gapValue:SetWidth(28)
+    row.gapValue:SetJustifyH("RIGHT")
+
+    row._chips = {}
+
+    blockRows[i] = row
+    return row
+end
+
+-- Lay out the chips inside row.chipHost, wrapping to the next line when
+-- the row width is exceeded. Returns the number of chip lines used (>= 1
+-- so the chip area never collapses to zero height — empty blocks still
+-- get one empty line so the bottom stripe sits where the user expects).
+local function refreshChips(row, b, parentWidth)
+    -- Chip frames are unnamed (no global name pool to leak into) so it is
+    -- safe to recreate them per refresh. The chip closures capture their
+    -- slotIndex by upvalue, which is the simplest correct way to handle
+    -- reorder/delete.
+    for _, c in ipairs(row._chips) do
+        c:Hide(); c:SetParent(nil)
+    end
+    wipe(row._chips)
+
+    -- Compute available width for chips. parentWidth is the listHost width
+    -- passed in by refreshBlockRows; on the very first refresh that may not
+    -- be valid yet, so fall back to a constant matching the default panel size.
+    local availW = (parentWidth or 0) - 8 - CHIP_AREA_LEFT - CHIP_AREA_RIGHT_PAD
+    if availW < 200 then availW = CHIP_AREA_W_FALLBACK end
+
+    local chipsPerLine = math.floor((availW + CHIP_GAP) / (CHIP_W + CHIP_GAP))
+    if chipsPerLine < 1 then chipsPerLine = 1 end
+
+    local widgets = b.widgets or {}
+    local count = #widgets
+    for slot, wid in ipairs(widgets) do
+        local chip = makeChip(row.chipHost, b.id, slot, wid)
+        local lineIdx = math.floor((slot - 1) / chipsPerLine)
+        local colIdx  = (slot - 1) % chipsPerLine
+        chip:ClearAllPoints()
+        chip:SetPoint("TOPLEFT", row.chipHost, "TOPLEFT",
+            colIdx * (CHIP_W + CHIP_GAP),
+            -lineIdx * CHIP_LINE_H)
+        tinsert(row._chips, chip)
+    end
+
+    local lines = (count > 0) and math.ceil(count / chipsPerLine) or 1
+    row.chipHost:SetSize(availW, lines * CHIP_LINE_H)
+
+    bindAddDropdown(row.addDD, b.id)
+    return lines
+end
+
+local function refreshStyleDropdown(row, b)
+    local dd = row.styleDD
+
+    local function applyText(key)
+        for _, opt in ipairs(STYLE_OPTIONS) do
+            if opt.key == key then UIDropDownMenu_SetText(dd, opt.text); break end
+        end
+    end
+
+    UIDropDownMenu_Initialize(dd, function()
+        for _, opt in ipairs(STYLE_OPTIONS) do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text  = opt.text
+            info.value = opt.key
+            info.checked = (b.style or "standard") == opt.key
+            info.func = function(self)
+                local idx = findBlockIndex(b.id)
+                if not idx then return end
+                AegisDBChar.blocks[idx].style = self.value
+                applyText(self.value)
+                rebuildOne(b.id)
+            end
+            UIDropDownMenu_AddButton(info)
+        end
+    end)
+
+    applyText(b.style or "standard")
+end
+
+local function bindRowScale(row, b)
+    local function setLabel(v)
+        row.scaleValue:SetText(("%d%%"):format(math.floor(v * 100 + 0.5)))
+    end
+    -- Clear before SetValue so the old handler (which closed over a stale
+    -- block ref when the row is reused for a different block) does not fire
+    -- with the new SetValue side-effect.
+    row.scale:SetScript("OnValueChanged", nil)
+    row.scale:SetValue(b.scale or 1.0)
+    setLabel(b.scale or 1.0)
+    row.scale:SetScript("OnValueChanged", function(self, v)
+        local idx = findBlockIndex(b.id)
+        if not idx then return end
+        AegisDBChar.blocks[idx].scale = v
+        local live = ns.BlockManager and ns.BlockManager.GetBlockByConfigId(b.id)
+        if live and live.frame then live.frame:SetScale(v) end
+        setLabel(v)
+    end)
+end
+
+local function bindRowGap(row, b)
+    local function setLabel(v)
+        row.gapValue:SetText(("%dpx"):format(math.floor(v + 0.5)))
+    end
+    row.gap:SetScript("OnValueChanged", nil)
+    row.gap:SetValue(b.gap or 4)
+    setLabel(b.gap or 4)
+    row.gap:SetScript("OnValueChanged", function(self, v)
+        local idx = findBlockIndex(b.id)
+        if not idx then return end
+        local intV = math.floor(v + 0.5)
+        AegisDBChar.blocks[idx].gap = intV
+        -- Gap drives widget positioning; relayout the block in place to
+        -- pick up the new spacing without flickering the rest of the HUD.
+        rebuildOne(b.id)
+        setLabel(intV)
+    end)
+end
+
+local function refreshBlockRows(parent)
+    local blocks = (AegisDBChar and AegisDBChar.blocks) or {}
+    for _, row in pairs(blockRows) do row:Hide() end
+
+    local parentW = parent:GetWidth() or 0
+    local cursor = 0
+    for i, b in ipairs(blocks) do
+        local row = getBlockRow(parent, i)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT",  parent, "TOPLEFT",  4, -cursor)
+        row:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -4, -cursor)
+
+        row.id:SetText(b.id or "?")
+
+        local p = b.position or {}
+        row.pos:SetText(("@ %s %+d,%+d"):format(
+            p.point or "?", p.xOffset or 0, p.yOffset or 0))
+
+        local orient = (b.orientation == "horizontal") and "horizontal" or "vertical"
+        row.orient:SetText(orient == "horizontal" and "Horiz." or "Vert.")
+        row.orient:SetScript("OnClick", function()
+            local idx = findBlockIndex(b.id)
+            if not idx then return end
+            local cur = AegisDBChar.blocks[idx].orientation
+            AegisDBChar.blocks[idx].orientation =
+                (cur == "horizontal") and "vertical" or "horizontal"
+            rebuildOne(b.id)
+            S.Refresh()
+        end)
+
+        refreshStyleDropdown(row, b)
+
+        row.del:SetScript("OnClick", function()
+            local idx = findBlockIndex(b.id)
+            if not idx then return end
+            tremove(AegisDBChar.blocks, idx)
+            if ns.BlockManager and ns.BlockManager.Build then
+                ns.BlockManager.Build()
+            end
+            S.Refresh()
+        end)
+
+        local lines = refreshChips(row, b, parentW)
+
+        -- Bottom stripe layout: + Add widget (left), Gap slider (middle),
+        -- Scale slider (right). UIDropDownMenuTemplate has ~16px of internal
+        -- left padding, hence the -16 nudge on addDD.
+        local bottomY = TOP_STRIPE_H + lines * CHIP_LINE_H + 4
+        row.addDD:ClearAllPoints()
+        row.addDD:SetPoint("TOPLEFT", row, "TOPLEFT", CHIP_AREA_LEFT - 16, -bottomY)
+
+        -- Scale slider anchored from the right edge of the row.
+        row.scaleValue:ClearAllPoints()
+        row.scaleValue:SetPoint("TOPRIGHT", row, "TOPRIGHT", -10, -(bottomY + 6))
+        row.scale:ClearAllPoints()
+        row.scale:SetPoint("RIGHT", row.scaleValue, "LEFT", -6, 0)
+        row.scaleLabel:ClearAllPoints()
+        row.scaleLabel:SetPoint("RIGHT", row.scale, "LEFT", -6, 0)
+
+        -- Gap slider sits to the left of the scale group, with breathing room.
+        row.gapValue:ClearAllPoints()
+        row.gapValue:SetPoint("RIGHT", row.scaleLabel, "LEFT", -12, 0)
+        row.gap:ClearAllPoints()
+        row.gap:SetPoint("RIGHT", row.gapValue, "LEFT", -6, 0)
+        row.gapLabel:ClearAllPoints()
+        row.gapLabel:SetPoint("RIGHT", row.gap, "LEFT", -6, 0)
+
+        bindRowScale(row, b)
+        bindRowGap(row, b)
+
+        local rowH = TOP_STRIPE_H + lines * CHIP_LINE_H + BOTTOM_STRIPE_H
+        row:SetHeight(rowH)
+        cursor = cursor + rowH + BLOCK_ROW_PAD
+
+        row:Show()
+    end
+    return cursor
+end
+
 local function buildBlocksTab(parent)
     local hdr = makeHeader(parent, "Blocks")
     hdr:SetPoint("TOPLEFT", parent, "TOPLEFT", 8, -4)
 
     local hint = makeBody(parent,
-        "Each row is a block. Click Delete to remove. Use /ae unlock to drag.\n"
-        .. "Add widgets to a block via:  /ae block add <h|v> <widget1> [widget2] ...")
+        "Per row: change orientation, style, add/remove/reorder widgets, "
+        .. "or delete the block. Use 'Move blocks' below to drag them on screen.")
     hint:SetPoint("TOPLEFT", hdr, "BOTTOMLEFT", 4, -6)
-    hint:SetWidth(440)
+    hint:SetWidth(500)
+    hint:SetJustifyH("LEFT")
 
-    -- Container for rows.
     local listHost = CreateFrame("Frame", nil, parent)
-    listHost:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", -4, -10)
+    listHost:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", -4, -8)
     listHost:SetPoint("RIGHT", parent, "RIGHT", -8, 0)
-    listHost:SetHeight(280)
+    listHost:SetHeight(330)
 
-    local function refreshList()
-        refreshBlockRows(listHost)
-    end
+    local function refreshList() refreshBlockRows(listHost) end
     refreshList()
     tinsert(S.refreshHandlers, refreshList)
 
-    -- Footer buttons.
-    local addBtn = makeButton(parent, "Add empty block at center", 200, function()
+    -- Footer
+    local addBtn = makeButton(parent, "+ Add empty block", 140, function()
         local newBlock = {
             id          = generateBlockId(),
             position    = {
@@ -568,6 +938,7 @@ local function buildBlocksTab(parent)
             orientation = "horizontal",
             style       = visual().defaultBlockStyle or "standard",
             scale       = 1.0,
+            gap         = 4,
             widgets     = {},
         }
         AegisDBChar.blocks = AegisDBChar.blocks or {}
@@ -579,10 +950,31 @@ local function buildBlocksTab(parent)
     end)
     addBtn:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", 8, 8)
 
-    local resetBtn = makeButton(parent, "Reset to defaults", 160, function()
+    -- Move-mode toggle: flips the global lock flag so the user can drag
+    -- blocks on screen from the panel itself, no slash command needed.
+    local moveBtn = makeButton(parent, "Move blocks", 110, function() end)
+    moveBtn:SetPoint("LEFT", addBtn, "RIGHT", 6, 0)
+    local function refreshMoveBtn()
+        local locked = (ns.BlockManager and ns.BlockManager.IsLocked()) ~= false
+        moveBtn:SetText(locked and "Move blocks" or "Lock positions")
+    end
+    moveBtn:SetScript("OnClick", function()
+        if not ns.BlockManager then return end
+        if ns.BlockManager.IsLocked() then
+            ns.BlockManager.Unlock()
+        else
+            ns.BlockManager.Lock()
+        end
+        refreshMoveBtn()
+        S.Refresh() -- refresh row position labels after a save
+    end)
+    refreshMoveBtn()
+    tinsert(S.refreshHandlers, refreshMoveBtn)
+
+    local resetBtn = makeButton(parent, "Reset to defaults", 140, function()
         if StaticPopup_Show then StaticPopup_Show("AEGIS_RESET_CONFIRM") end
     end)
-    resetBtn:SetPoint("LEFT", addBtn, "RIGHT", 8, 0)
+    resetBtn:SetPoint("LEFT", moveBtn, "RIGHT", 6, 0)
 end
 
 ----------------------------------------------------------------

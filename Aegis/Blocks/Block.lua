@@ -9,7 +9,7 @@ local Block = {}
 Block.__index = Block
 ns.Block.__class = Block
 
-local WIDGET_GAP = 4
+local DEFAULT_WIDGET_GAP = 4  -- fallback when config.gap is missing (pre-v8 data)
 
 local function makePixel(parent, layer)
     local t = parent:CreateTexture(nil, layer or "OVERLAY")
@@ -90,14 +90,38 @@ end
 
 -- Lay out widgets according to config.widgets, config.orientation. Skips
 -- widgets whose IsAvailable() returns false.
+--
+-- Convention (orientation describes the BAR shape, not the block growth
+-- direction):
+--   "horizontal" block = widgets render in their wide form (HP bar 150x22,
+--                        combo pips as a horizontal row); the block packs
+--                        them top-to-bottom.
+--   "vertical"   block = widgets render in their tall form (HP bar 22x100,
+--                        combo pips as a bottom-to-top column); the block
+--                        packs them left-to-right.
+--
+-- Special-case for `kind = "text"` widgets (the four Pressure readouts:
+-- dps_in / hps_in / dps_out / hps_out): in vertical blocks, two consecutive
+-- text widgets stack in the MINOR axis (Y) instead of taking their own
+-- column. This avoids the "two text widgets side-by-side at the right of
+-- the bars" outcome — the natural reading order is top-to-bottom for stacked
+-- text. A single text widget after a bar still gets its own column. In
+-- horizontal blocks the rule is a no-op: the main flow is already top-to-
+-- bottom, so consecutive text widgets stack naturally.
 function Block:Layout()
     self:teardownWidgets()
 
     local orientation = self.config.orientation or "horizontal"
     local style = self.config.style or "standard"
+    local gap = self.config.gap or DEFAULT_WIDGET_GAP
 
     local xCursor, yCursor = 0, 0
     local maxW, maxH = 0, 0
+
+    -- For vertical blocks: track the column origin of the most recently
+    -- placed text widget so the next consecutive text widget can stack
+    -- under it instead of taking a fresh column.
+    local prevTextX, prevTextBottom, prevTextWidth
 
     for _, widgetId in ipairs(self.config.widgets or {}) do
         local widget = ns.WidgetCatalog and ns.WidgetCatalog[widgetId]
@@ -105,12 +129,37 @@ function Block:Layout()
             local frame, w, h = widget.Build(self.frame, orientation, style)
             frame:ClearAllPoints()
             if orientation == "vertical" then
-                frame:SetPoint("TOPLEFT", self.frame, "TOPLEFT", xCursor, 0)
-                xCursor = xCursor + w + WIDGET_GAP
-                if h > maxH then maxH = h end
+                local isText = (widget.kind == "text")
+                if isText and prevTextX then
+                    -- Stack under the previous text widget in the same column.
+                    frame:SetPoint("TOPLEFT", self.frame, "TOPLEFT",
+                        prevTextX, -prevTextBottom)
+                    local newBottom = prevTextBottom + h + gap
+                    prevTextBottom = newBottom
+                    if w > prevTextWidth then prevTextWidth = w end
+                    -- Track the rightmost extent of the column so the block
+                    -- width grows if the wider text widget overhangs.
+                    local colRight = prevTextX + prevTextWidth + gap
+                    if colRight > xCursor then xCursor = colRight end
+                    if newBottom - gap > maxH then
+                        maxH = newBottom - gap
+                    end
+                else
+                    frame:SetPoint("TOPLEFT", self.frame, "TOPLEFT", xCursor, 0)
+                    if isText then
+                        prevTextX      = xCursor
+                        prevTextBottom = h + gap
+                        prevTextWidth  = w
+                    else
+                        -- Bars reset the text-stacking state.
+                        prevTextX = nil
+                    end
+                    xCursor = xCursor + w + gap
+                    if h > maxH then maxH = h end
+                end
             else
                 frame:SetPoint("TOPLEFT", self.frame, "TOPLEFT", 0, -yCursor)
-                yCursor = yCursor + h + WIDGET_GAP
+                yCursor = yCursor + h + gap
                 if w > maxW then maxW = w end
             end
             table.insert(self.widgets, {
@@ -122,10 +171,10 @@ function Block:Layout()
     end
 
     if orientation == "vertical" then
-        local width = math.max(1, xCursor - WIDGET_GAP)
+        local width = math.max(1, xCursor - gap)
         self.frame:SetSize(width, math.max(1, maxH))
     else
-        local height = math.max(1, yCursor - WIDGET_GAP)
+        local height = math.max(1, yCursor - gap)
         self.frame:SetSize(math.max(1, maxW), height)
     end
 end

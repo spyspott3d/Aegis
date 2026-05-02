@@ -18,10 +18,16 @@ function ComboPoints.IsAvailable()
 end
 
 function ComboPoints.GetPreferredSize(orientation)
-    -- Combo pips look weird as a vertical column. Even in vertical-orientation
-    -- blocks, the row stays horizontal — the widget reports a wider-than-tall
-    -- footprint and the block packs it as one row.
-    -- Reserve extra width for the optional "n/N" count text on the right.
+    -- In a vertical block (widgets stack top-to-bottom, with wide horizontal
+    -- bars below), the pips render as a vertical column from bottom to top
+    -- so the "stack" reads naturally above the bars. In a horizontal block
+    -- (widgets side-by-side, with tall bars), the pips render as a
+    -- horizontal row above or below the bars. Either way we reserve a bit
+    -- of extra space for the optional "n/N" count text.
+    if orientation == "vertical" then
+        local h = NUM_PIPS * PIP_SIZE + (NUM_PIPS - 1) * PIP_GAP + 16
+        return PIP_SIZE, h
+    end
     local w = NUM_PIPS * PIP_SIZE + (NUM_PIPS - 1) * PIP_GAP + 28
     return w, PIP_SIZE
 end
@@ -32,13 +38,23 @@ local function makePixel(parent, layer)
     return t
 end
 
-local function buildPip(parent, theme, index, prevPip)
+local function buildPip(parent, theme, index, prevPip, orientation)
     local pip = CreateFrame("Frame", nil, parent)
     pip:SetSize(PIP_SIZE, PIP_SIZE)
-    if index == 1 then
-        pip:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, 0)
+    if orientation == "vertical" then
+        -- Vertical column, growing bottom-to-top so the player sees the
+        -- stack "rise" as combo points are built.
+        if index == 1 then
+            pip:SetPoint("BOTTOMLEFT", parent, "BOTTOMLEFT", 0, 0)
+        else
+            pip:SetPoint("BOTTOMLEFT", prevPip, "TOPLEFT", 0, PIP_GAP)
+        end
     else
-        pip:SetPoint("TOPLEFT", prevPip, "TOPRIGHT", PIP_GAP, 0)
+        if index == 1 then
+            pip:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, 0)
+        else
+            pip:SetPoint("TOPLEFT", prevPip, "TOPRIGHT", PIP_GAP, 0)
+        end
     end
 
     local bg = pip:CreateTexture(nil, "BACKGROUND")
@@ -134,16 +150,22 @@ function ComboPoints.Build(parent, orientation, style)
     frame.pips = {}
     local prev = nil
     for i = 1, NUM_PIPS do
-        local pip = buildPip(frame, Theme, i, prev)
+        local pip = buildPip(frame, Theme, i, prev, orientation)
         pip:Hide() -- hidden until refresh raises them
         frame.pips[i] = pip
         prev = pip
     end
 
     -- Count overlay ("3/5"), opt-in via AegisDB.visual.showComboCount.
+    -- Anchored just past the topmost pip in either layout (right of the
+    -- last horizontal pip, above the last vertical pip).
     local countText = frame:CreateFontString(nil, "OVERLAY")
     countText:SetFont(Theme.font, Theme.fontSize, Theme.fontFlags)
-    countText:SetPoint("LEFT", prev, "RIGHT", 6, 0)
+    if orientation == "vertical" then
+        countText:SetPoint("BOTTOM", prev, "TOP", 0, 4)
+    else
+        countText:SetPoint("LEFT", prev, "RIGHT", 6, 0)
+    end
     countText:Hide()
     frame.countText = countText
 
