@@ -57,7 +57,11 @@ if ! grep -q "^## Version: ${VERSION}$" "${TOC}"; then
 fi
 
 git add "${TOC}"
-git commit -m "release: ${VERSION}"
+# Skip the commit when the .toc was already at the target version (first
+# release, or re-running the script after a manual bump). Without this,
+# `git commit` aborts on "nothing to commit" and `set -e` kills the script
+# before the tag is created.
+git diff --cached --quiet || git commit -m "release: ${VERSION}"
 git tag -a "${TAG}" -m "Release ${VERSION}"
 
 echo "[release] Pushing main and tag ${TAG}..."
