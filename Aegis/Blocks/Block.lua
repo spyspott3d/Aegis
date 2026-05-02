@@ -11,15 +11,29 @@ ns.Block.__class = Block
 
 local DEFAULT_WIDGET_GAP = 4  -- fallback when config.gap is missing (pre-v8 data)
 
--- Frame center expressed as offset from UIParent's center, in UIParent's
--- coordinate space. Stable regardless of which anchor StartMoving rewrote
--- the frame to (WoW's StartMoving converts the anchor to TOPLEFT-relative
--- internally, which makes GetPoint return weird coordinates mid-drag).
+-- Frame center expressed as offset from UIParent's center, in the FRAME's
+-- own coordinate space (which is what SetPoint expects for the offset args).
+-- Stable regardless of which anchor StartMoving rewrote the frame to (WoW's
+-- StartMoving converts the anchor to TOPLEFT-relative internally, which
+-- makes GetPoint return weird coordinates mid-drag).
+--
+-- GetCenter returns coords in the queried frame's local space (= screen
+-- pixels / that frame's EffectiveScale). When the block has scale != 1, the
+-- frame and UIParent have different effective scales, so subtracting their
+-- centers directly mixes units and the saved offset is wrong — the block
+-- visibly teleports on drag release. We convert both centers to absolute
+-- screen pixels first, then divide back by the frame's effective scale.
 local function liveCenterOffset(frame)
     local fx, fy = frame:GetCenter()
     local px, py = UIParent:GetCenter()
     if not (fx and px) then return 0, 0 end
-    return fx - px, fy - py
+    local fScale = frame:GetEffectiveScale()
+    local pScale = UIParent:GetEffectiveScale()
+    if not (fScale and pScale) or fScale == 0 then
+        return fx - px, fy - py
+    end
+    return (fx * fScale - px * pScale) / fScale,
+           (fy * fScale - py * pScale) / fScale
 end
 
 local function makePixel(parent, layer)

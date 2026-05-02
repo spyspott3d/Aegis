@@ -770,7 +770,9 @@ local function getBlockRow(parent, i)
     end
 
     row.gapValue = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    row.gapValue:SetWidth(28)
+    -- Wide enough for "-10px" through "30px". 28px clipped the leading "-"
+    -- of two-digit negatives onto the previous line.
+    row.gapValue:SetWidth(36)
     row.gapValue:SetJustifyH("RIGHT")
 
     row._chips = {}
