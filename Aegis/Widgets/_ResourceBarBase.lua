@@ -131,31 +131,47 @@ function Base.MakeWidget(config)
         refresh(self)
     end
 
-    function Widget.Build(parent, orientation, style)
+    function Widget.Build(parent, orientation, style, curve)
+        curve = curve or "none"
         local Theme = ns.Theme
         local w, h = Widget.GetPreferredSize(orientation)
-        local frame = CreateFrame("StatusBar", nil, parent)
-        frame:SetSize(w, h)
-        frame:SetStatusBarTexture(Theme.statusBarTexture)
-        if orientation == "vertical" then
-            frame:SetOrientation("VERTICAL")
+
+        local frame
+        if curve == "left" or curve == "right" then
+            -- Curved bar: shape texture with TexCoord-based fill. The bg and
+            -- border are baked into the texture so we skip the manual pixel
+            -- bg + buildBorder calls used by the StatusBar branch. Glossy is
+            -- skipped too (the texture's own visual identity replaces it).
+            local shape = (curve == "left") and "ArcLeft" or "ArcRight"
+            frame = ns.TextureBar.New(parent, w, h, shape, { set = "Wide" })
+            local fill = Theme.colors[config.colorKey] or Theme.colors.mana
+            frame:SetStatusBarColor(fill[1], fill[2], fill[3], fill[4])
+            frame:SetMinMaxValues(0, 1)
+            frame:SetValue(1)
+        else
+            frame = CreateFrame("StatusBar", nil, parent)
+            frame:SetSize(w, h)
+            frame:SetStatusBarTexture(Theme.statusBarTexture)
+            if orientation == "vertical" then
+                frame:SetOrientation("VERTICAL")
+            end
+
+            local fill = Theme.colors[config.colorKey] or Theme.colors.mana
+            frame:SetStatusBarColor(fill[1], fill[2], fill[3], fill[4])
+            frame:SetMinMaxValues(0, 1)
+            frame:SetValue(1)
+
+            local bg = makePixel(frame, "BACKGROUND")
+            bg:SetAllPoints(frame)
+            local bgC = Theme.colors.bgDark
+            bg:SetVertexColor(bgC[1], bgC[2], bgC[3], bgC[4])
+
+            if style == "glossy" and Theme.ApplyGlossy then
+                Theme.ApplyGlossy(frame)
+            end
+
+            buildBorder(frame, Theme.colors.border)
         end
-
-        local fill = Theme.colors[config.colorKey] or Theme.colors.mana
-        frame:SetStatusBarColor(fill[1], fill[2], fill[3], fill[4])
-        frame:SetMinMaxValues(0, 1)
-        frame:SetValue(1)
-
-        local bg = makePixel(frame, "BACKGROUND")
-        bg:SetAllPoints(frame)
-        local bgC = Theme.colors.bgDark
-        bg:SetVertexColor(bgC[1], bgC[2], bgC[3], bgC[4])
-
-        if style == "glossy" and Theme.ApplyGlossy then
-            Theme.ApplyGlossy(frame)
-        end
-
-        buildBorder(frame, Theme.colors.border)
 
         frame.text = frame:CreateFontString(nil, "OVERLAY")
         frame.text:SetFont(Theme.font, Theme.fontSize - 2, Theme.fontFlags)

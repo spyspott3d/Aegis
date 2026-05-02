@@ -32,3 +32,11 @@ SPEC.md
 # Throwaway test addon used during the curved-bar texture work — kept
 # locally as a probe but not part of the published addon.
 AegisBarTest/
+
+# Reference addons dropped in for inspection during development; not part
+# of Aegis itself and not redistributed (Rubim-TTD is MIT but unrelated).
+Rubim-TTD/
+
+# Debug previews emitted by tools/generate_bars.py — useful while iterating
+# locally, not part of the addon ship.
+tools/_*.png

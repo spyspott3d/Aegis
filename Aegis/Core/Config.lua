@@ -7,10 +7,10 @@ local _, ns = ...
 ns.Config = ns.Config or {}
 local Config = ns.Config
 
-Config.SCHEMA_VERSION = 8
+Config.SCHEMA_VERSION = 9
 
 local accountDefaults = {
-    version = 8,
+    version = 9,
     pressure = {
         windowSeconds = 4,
         thresholds = {
@@ -56,6 +56,13 @@ local accountDefaults = {
         -- out of combat too (rarely useful in practice — sliding-window
         -- data ages out and the halo just lingers post-fight).
         haloInCombatOnly = true,
+        -- Where to anchor the TTD readout when the HP bar is in vertical
+        -- orientation: "above" puts it on top of the bar, "below" beneath.
+        -- Horizontal bars always read TTD to the right (no setting).
+        ttdPositionVertical = "below",
+        -- Master toggle for the TTD readout. Off hides it entirely
+        -- regardless of pressure state.
+        showTTD = true,
     },
 }
 
@@ -79,6 +86,7 @@ local defaultBlocks = {
         style = "standard",
         scale = 1.0,
         gap = 4,
+        curve = "none",
         widgets = { "combo", "health", "mana" },
     },
     {
@@ -93,6 +101,7 @@ local defaultBlocks = {
         style = "standard",
         scale = 1.0,
         gap = 4,
+        curve = "none",
         widgets = { "rage", "energy", "runic" },
     },
 }
@@ -208,6 +217,11 @@ local accountMigrations = {
         -- No account-side change here.
         db.version = 8
     end,
+    [9] = function(db)
+        -- v8 -> v9: per-block `curve` field added (none/left/right). No
+        -- account-side change here.
+        db.version = 9
+    end,
 }
 
 local charMigrations = {
@@ -282,6 +296,17 @@ local charMigrations = {
             end
         end
         db.version = 8
+    end,
+    [9] = function(db)
+        -- v8 -> v9: per-block `curve` (none/left/right) added. Existing
+        -- blocks get "none" so visuals stay rectangular until the user
+        -- explicitly picks a curve in the Blocks tab.
+        if db.blocks then
+            for _, b in ipairs(db.blocks) do
+                if b.curve == nil then b.curve = "none" end
+            end
+        end
+        db.version = 9
     end,
 }
 

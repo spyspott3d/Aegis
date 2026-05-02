@@ -12,6 +12,7 @@ Core\Util.lua
 Core\Config.lua
 Core\Settings.lua
 UI\Theme.lua
+UI\TextureBar.lua
 Widgets\Widget.lua
 Widgets\_ResourceBarBase.lua
 Widgets\_TextValueBase.lua

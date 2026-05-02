@@ -135,6 +135,7 @@ local function addBlock(args)
         style       = (AegisDB.visual and AegisDB.visual.defaultBlockStyle) or "standard",
         scale       = 1.0,
         gap         = 4,
+        curve       = "none",
         widgets     = widgets,
     }
     AegisDBChar.blocks = AegisDBChar.blocks or {}

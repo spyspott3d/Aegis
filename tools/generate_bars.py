@@ -47,9 +47,13 @@ SAMPLES = 64
 # at runtime by texture:SetVertexColor; white as a base preserves any tint.
 FILL_RGBA = (255, 255, 255, 255)
 
-# Background variant: dark grey at moderate alpha, sits behind the fill so
-# the empty portion of the bar reads as "track".
-BG_RGBA = (26, 26, 26, 200)
+# Background variant: dark grey, fully opaque. Opaque (alpha 255) so the
+# halo behind the bar is hidden under the bg in the empty portion of the
+# bar — earlier we used alpha 200 (~78%), which let the halo color bleed
+# through the empty zone and made the halo look like it sat ON TOP of the
+# empty bar instead of behind it. Halo is now strictly visible only as a
+# fringe outside the bar's silhouette.
+BG_RGBA = (26, 26, 26, 255)
 
 
 def spine_x(y, sh, cx, bulge):
@@ -210,6 +214,21 @@ def generate_canonical(width, height):
             Slightly fatter; both edges still well-balanced thanks to the
             bbox-centered spine that keeps the outer edge clear of the
             canvas border.
+
+    Each shape ships three .tga variants:
+      <Shape>.tga     fill silhouette (white, tinted at runtime).
+      <Shape>BG.tga   background variant (dark grey, sits behind the fill).
+      <Shape>Halo.tga halo silhouette = bar shape with thickness expanded
+                      by 2*HALO_GROW. Sized to render at the SAME frame
+                      size as the bar; the extra width inside the texture
+                      becomes the visible fringe behind the bar. Doing
+                      the outset inside the texture (rather than scaling
+                      the bar texture in a larger frame) keeps the fringe
+                      width uniform along the curve — scaling around the
+                      canvas center pushes off-center silhouettes
+                      asymmetrically and produces uneven fringes at the
+                      top / bottom of curved bars.
+
     Both use curvature=±0.30 for the arc variants. To explore alternatives,
     drop --canonical and use the explicit --thickness / --mode flags.
     """
@@ -217,6 +236,11 @@ def generate_canonical(width, height):
         ("Thin", 0.30),
         ("Wide", 0.40),
     ]
+    # Halo silhouette is the bar silhouette with thickness expanded by
+    # 2*HALO_GROW (halo_grow on each side). At native canvas width 64, this
+    # yields ~6.4 px of fringe, which downscales to ~2.2 px at the default
+    # 22-wide rendered bar — visible but not overpowering.
+    HALO_GROW = 0.10
     shapes = [
         ("Bar",      0.00),
         ("ArcRight", +0.30),
@@ -225,11 +249,17 @@ def generate_canonical(width, height):
     for set_name, thickness in canonical:
         out = Path("Aegis/Textures") / set_name
         out.mkdir(parents=True, exist_ok=True)
-        print("Writing {} (thickness={:.2f})".format(out.resolve(), thickness))
+        print("Writing {} (bar_t={:.2f}, halo_t={:.2f})".format(
+            out.resolve(), thickness, thickness + 2 * HALO_GROW))
         for name, curv in shapes:
-            for variant, color in (("", FILL_RGBA), ("BG", BG_RGBA)):
+            variants = (
+                ("",     FILL_RGBA, thickness),
+                ("BG",   BG_RGBA,   thickness),
+                ("Halo", FILL_RGBA, thickness + 2 * HALO_GROW),
+            )
+            for variant, color, t in variants:
                 img = render_bar(width, height, color, curv,
-                                 thickness, "offset", center_bbox=True)
+                                 t, "offset", center_bbox=True)
                 path = out / "{}{}.tga".format(name, variant)
                 save_tga(img, path)
                 ok, mode, size = validate_tga(path)

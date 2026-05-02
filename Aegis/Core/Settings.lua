@@ -199,6 +199,28 @@ local function makeBody(parent, text)
     return fs
 end
 
+-- Wrap a tab parent in a vertical scrollframe and return the inner content
+-- frame. Widgets that would have anchored to the tab now anchor to `content`
+-- instead, and the scroll panel handles overflow when content height exceeds
+-- the tab's visible area. Width is sized to the tab minus scrollbar room.
+local function withScroll(parent, topInset, bottomInset)
+    topInset    = topInset    or 0
+    bottomInset = bottomInset or 0
+    local sf = CreateFrame("ScrollFrame", uniqName("Scroll"), parent,
+        "UIPanelScrollFrameTemplate")
+    sf:SetPoint("TOPLEFT",     parent, "TOPLEFT",      0,    -topInset)
+    sf:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", -28,    bottomInset)
+
+    local content = CreateFrame("Frame", nil, sf)
+    -- Width: parent minus scrollbar gutter (~28). The default panel width
+    -- (560) leaves ~500 px for content. Setting an initial size avoids a
+    -- 0-width child on the first paint.
+    content:SetSize(500, 1)
+    sf:SetScrollChild(content)
+
+    return content, sf
+end
+
 ----------------------------------------------------------------
 -- Tab switching + frame creation
 ----------------------------------------------------------------
@@ -406,6 +428,7 @@ local function readBarFormat(key)
 end
 
 local function buildVisualTab(parent)
+    parent = withScroll(parent)
     local hdr = makeHeader(parent, "Visual")
     hdr:SetPoint("TOPLEFT", parent, "TOPLEFT", 8, -4)
 
@@ -447,6 +470,28 @@ local function buildVisualTab(parent)
         function(v) visual().haloInCombatOnly = v; notify() end)
     cbHaloOOC:SetPoint("TOPLEFT", cbCombo, "BOTTOMLEFT", 0, -2)
 
+    local cbShowTTD = makeCheckbox(parent, "Show TTD readout on the HP bar",
+        function()
+            local v = visual().showTTD
+            if v == nil then return true end
+            return v ~= false
+        end,
+        function(v) visual().showTTD = v end)
+    cbShowTTD:SetPoint("TOPLEFT", cbHaloOOC, "BOTTOMLEFT", 0, -2)
+
+    -- TTD position for vertical HP bars. Horizontal bars always show TTD to
+    -- the right (no setting). The setting is read on every applyTTDText
+    -- call so changing it is live (next pressure tick).
+    local ttdPosDD = makeDropdown(parent,
+        "TTD position (vertical bars)",
+        {
+            { key = "below", text = "Below bar" },
+            { key = "above", text = "Above bar" },
+        },
+        function() return visual().ttdPositionVertical or "below" end,
+        function(v) visual().ttdPositionVertical = v end)
+    ttdPosDD:SetPoint("TOPLEFT", cbShowTTD, "BOTTOMLEFT", -18, -10)
+
     local styleDD = makeDropdown(parent,
         "Default style for new blocks",
         {
@@ -455,7 +500,15 @@ local function buildVisualTab(parent)
         },
         function() return visual().defaultBlockStyle end,
         function(v) visual().defaultBlockStyle = v end)
-    styleDD:SetPoint("TOPLEFT", cbHaloOOC, "BOTTOMLEFT", -18, -10)
+    -- Note: keep the long labels here in the Visual tab where horizontal
+    -- space allows them. The per-row Style dropdown in the Blocks tab uses
+    -- the short labels (STYLE_OPTIONS) to fit the row layout.
+    styleDD:SetPoint("TOPLEFT", ttdPosDD, "BOTTOMLEFT", 0, -8)
+
+    -- Tell the scrollframe how tall the content actually is. ~520 px covers
+    -- the current widget stack with breathing room; if more settings are
+    -- added later, bump this.
+    parent:SetHeight(560)
 end
 
 ----------------------------------------------------------------
@@ -479,8 +532,8 @@ local CHIP_AREA_LEFT     = 64      -- margin + "Widgets:" label + gap
 local CHIP_AREA_RIGHT_PAD = 6      -- right margin inside the row
 local CHIP_AREA_W_FALLBACK = 440   -- before listHost has a real width
 local STYLE_OPTIONS = {
-    { key = "standard", text = "Standard (flat)"           },
-    { key = "glossy",   text = "Glossy (gradient overlay)" },
+    { key = "standard", text = "Standard" },
+    { key = "glossy",   text = "Glossy"   },
 }
 local blockRows = {}
 
@@ -640,12 +693,20 @@ local function getBlockRow(parent, i)
 
     row.styleDD = CreateFrame("Frame", uniqName("BlockStyle"), row, "UIDropDownMenuTemplate")
     row.styleDD:SetPoint("LEFT", row.orient, "RIGHT", -10, -2)
-    UIDropDownMenu_SetWidth(row.styleDD, 130)
+    UIDropDownMenu_SetWidth(row.styleDD, 80)
 
     row.del = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
     row.del:SetSize(60, 20)
     row.del:SetPoint("TOPRIGHT", row, "TOPRIGHT", -6, -6)
     row.del:SetText("Delete")
+
+    -- Curve dropdown: only meaningful for vertical-orientation blocks (tall
+    -- vertical bars side-by-side, where the texture-based ArcLeft / ArcRight
+    -- shapes apply). Hidden in horizontal blocks. Sits to the right of
+    -- styleDD so they read as a group.
+    row.curveDD = CreateFrame("Frame", uniqName("BlockCurve"), row, "UIDropDownMenuTemplate")
+    row.curveDD:SetPoint("LEFT", row.styleDD, "RIGHT", -10, 0)
+    UIDropDownMenu_SetWidth(row.curveDD, 60)
 
     -- Middle stripe: "Widgets:" label + chip area (variable height)
     row.widgetsLabel = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
@@ -692,7 +753,10 @@ local function getBlockRow(parent, i)
     row.gapLabel:SetText("Gap:")
 
     row.gap = CreateFrame("Slider", uniqName("BlockGap"), row, "OptionsSliderTemplate")
-    row.gap:SetMinMaxValues(0, 30)
+    -- Negative gaps overlap widgets in the layout — useful for curved bars
+    -- where the texture canvas has transparent padding around the silhouette,
+    -- so a positive 0px "gap" still leaves visible empty space between bars.
+    row.gap:SetMinMaxValues(-30, 30)
     row.gap:SetValueStep(1)
     if row.gap.SetObeyStepOnDrag then row.gap:SetObeyStepOnDrag(true) end
     row.gap:SetWidth(60)
@@ -787,6 +851,51 @@ local function refreshStyleDropdown(row, b)
     applyText(b.style or "standard")
 end
 
+local CURVE_OPTIONS = {
+    { key = "none",  text = "Normal"  },
+    { key = "left",  text = "Left ("  },
+    { key = "right", text = "Right )" },
+}
+
+local function refreshCurveDropdown(row, b)
+    -- Only show in vertical blocks (tall vertical bars side-by-side); the
+    -- texture set is designed for that direction. In horizontal blocks the
+    -- dropdown is hidden so the user is not tempted to pick a value that
+    -- would have no visual effect.
+    local visible = (b.orientation == "vertical")
+    if not visible then
+        row.curveDD:Hide()
+        return
+    end
+    row.curveDD:Show()
+
+    local dd = row.curveDD
+    local function applyText(key)
+        for _, opt in ipairs(CURVE_OPTIONS) do
+            if opt.key == key then UIDropDownMenu_SetText(dd, opt.text); break end
+        end
+    end
+
+    UIDropDownMenu_Initialize(dd, function()
+        for _, opt in ipairs(CURVE_OPTIONS) do
+            local info = UIDropDownMenu_CreateInfo()
+            info.text  = opt.text
+            info.value = opt.key
+            info.checked = (b.curve or "none") == opt.key
+            info.func = function(self)
+                local idx = findBlockIndex(b.id)
+                if not idx then return end
+                AegisDBChar.blocks[idx].curve = self.value
+                applyText(self.value)
+                rebuildOne(b.id)
+            end
+            UIDropDownMenu_AddButton(info)
+        end
+    end)
+
+    applyText(b.curve or "none")
+end
+
 local function bindRowScale(row, b)
     local function setLabel(v)
         row.scaleValue:SetText(("%d%%"):format(math.floor(v * 100 + 0.5)))
@@ -857,6 +966,7 @@ local function refreshBlockRows(parent)
         end)
 
         refreshStyleDropdown(row, b)
+        refreshCurveDropdown(row, b)
 
         row.del:SetScript("OnClick", function()
             local idx = findBlockIndex(b.id)
@@ -906,24 +1016,38 @@ local function refreshBlockRows(parent)
 end
 
 local function buildBlocksTab(parent)
-    local hdr = makeHeader(parent, "Blocks")
-    hdr:SetPoint("TOPLEFT", parent, "TOPLEFT", 8, -4)
+    local tabFrame = parent
 
-    local hint = makeBody(parent,
+    local hdr = makeHeader(tabFrame, "Blocks")
+    hdr:SetPoint("TOPLEFT", tabFrame, "TOPLEFT", 8, -4)
+
+    local hint = makeBody(tabFrame,
         "Per row: change orientation, style, add/remove/reorder widgets, "
         .. "or delete the block. Use 'Move blocks' below to drag them on screen.")
     hint:SetPoint("TOPLEFT", hdr, "BOTTOMLEFT", 4, -6)
     hint:SetWidth(500)
     hint:SetJustifyH("LEFT")
 
-    local listHost = CreateFrame("Frame", nil, parent)
-    listHost:SetPoint("TOPLEFT", hint, "BOTTOMLEFT", -4, -8)
-    listHost:SetPoint("RIGHT", parent, "RIGHT", -8, 0)
-    listHost:SetHeight(330)
+    -- ScrollFrame holding the per-block rows. The footer (add / move / reset)
+    -- stays anchored to the tab itself, OUTSIDE the scroll, so action buttons
+    -- are always reachable no matter how many blocks the user has stacked.
+    local sf = CreateFrame("ScrollFrame", uniqName("BlocksScroll"), tabFrame,
+        "UIPanelScrollFrameTemplate")
+    sf:SetPoint("TOPLEFT",     hint,     "BOTTOMLEFT", -4, -8)
+    sf:SetPoint("BOTTOMRIGHT", tabFrame, "BOTTOMRIGHT", -28, 36)
 
-    local function refreshList() refreshBlockRows(listHost) end
+    local listHost = CreateFrame("Frame", nil, sf)
+    listHost:SetSize(500, 1)  -- height set per refresh below
+    sf:SetScrollChild(listHost)
+
+    local function refreshList()
+        local total = refreshBlockRows(listHost)
+        listHost:SetHeight(math.max(1, total))
+    end
     refreshList()
     tinsert(S.refreshHandlers, refreshList)
+
+    parent = tabFrame  -- footer buttons anchor to the tab, not the scroll
 
     -- Footer
     local addBtn = makeButton(parent, "+ Add empty block", 140, function()
@@ -939,6 +1063,7 @@ local function buildBlocksTab(parent)
             style       = visual().defaultBlockStyle or "standard",
             scale       = 1.0,
             gap         = 4,
+            curve       = "none",
             widgets     = {},
         }
         AegisDBChar.blocks = AegisDBChar.blocks or {}

@@ -5,19 +5,27 @@
 -- hysteresis. Phase 3 ships the data layer; Phase 4 will hook it to the
 -- visual overlay on the health widget and to the four text widgets.
 --
--- Two parallel metrics serve different needs:
+-- Three parallel metrics serve different needs:
 --
 --  * Sliding window (default 4s, configurable) drives the pressure state
---    and TTD. It must be responsive to bursts: a sudden DPS spike should
---    push the bar to warning/critical immediately, not lag behind a
---    growing average.
+--    machine (halo color / drain detection). It must be responsive to
+--    bursts: a sudden DPS spike should push the bar to warning/critical
+--    immediately, not lag behind a growing average.
 --
---  * Session-since-combat-start drives the displayed text widgets. It is
---    stable mid-fight even against slow attackers: a mob that hits once
---    every 5s will produce a steady "session DPS" instead of a 4s
---    sliding window that oscillates between a real value and 0 between
---    hits. It freezes when leaving combat (so the post-fight readout is
---    "the average for that fight") and resets at the next combat entry.
+--  * Session-since-combat-start drives the displayed text widgets
+--    (dps_in/hps_in/dps_out/hps_out). It is stable mid-fight even against
+--    slow attackers: a mob that hits once every 5s will produce a steady
+--    "session DPS" instead of a 4s sliding window that oscillates between
+--    a real value and 0 between hits. Freezes on leaving combat, resets
+--    at the next combat entry.
+--
+--  * HP-delta rolling-peak drives the displayed TTD readout. Samples HP
+--    every tick into a small ring buffer; computes the rate of HP loss
+--    from the highest HP within the last HP_WINDOW seconds to current HP.
+--    Heals are handled implicitly — when HP rises above the window's
+--    peak, the peak resets and the rate recomputes from there. Catches
+--    damage / heals that the combat log misses (Ascension custom
+--    mechanics, environmental, untracked auras).
 --
 -- Hot path: COMBAT_LOG_EVENT_UNFILTERED fires hundreds of times per second
 -- in a 25-man fight. Per CLAUDE.md hard rule #4, the first thing the
@@ -46,6 +54,16 @@ local SESSION_PRIME_WINDOW = 1.0        -- prime session from buffer events
                                          -- PLAYER_REGEN_DISABLED fires
 local SESSION_MIN_ELAPSED  = 0.5        -- below this, session DPS would
                                          -- be a noisy spike; emit 0
+
+-- HP-delta TTD (drives the displayed TTD readout). Rolling peak HP within a
+-- short sliding window — when HP rises above the recorded peak, the peak
+-- resets to the new value. Heals are handled implicitly: a heal pushes the
+-- peak forward so the rate calculation restarts from the post-heal HP.
+-- Direct HP measurement also catches damage / heals that the combat log
+-- misses (Ascension custom mechanics, environmental, untracked auras).
+local HP_BUFFER_SIZE = 32
+local HP_WINDOW      = 5     -- seconds of HP history to consider
+local HP_MIN_ELAPSED = 0.5   -- below this, the rate would be a spike
 
 local DAMAGE_SUBEVENTS = {
     SWING_DAMAGE          = true,
@@ -76,19 +94,17 @@ local STATE_RANK = {
 ----------------------------------------------------------------
 
 Pressure.state        = "none"
-Pressure.ttd          = nil  -- raw, used for state thresholds
-Pressure.ttd_smoothed = nil  -- EMA-smoothed, used for display
+Pressure.ttd          = nil  -- combat-log sliding window; drives the state
+                              -- machine (halo color / drain detection).
+Pressure.ttd_display  = nil  -- HP-delta rolling-peak; drives the visible
+                              -- TTD readout. More accurate than the
+                              -- sliding-window number because it measures
+                              -- HP directly and naturally handles heals.
 Pressure.dps_in       = 0    -- session: total damage taken / combat elapsed
 Pressure.hps_in       = 0
 Pressure.dps_out      = 0
 Pressure.hps_out      = 0
 Pressure.debug        = false
-
--- EMA smoothing factor for the displayed TTD (per 0.25s tick). At 0.3,
--- the smoothed value reaches ~95% of a constant raw within ~2 seconds.
--- The state machine still uses raw Pressure.ttd so thresholds remain
--- responsive to bursts; only the visible number is smoothed.
-local TTD_SMOOTH_ALPHA = 0.3
 
 function Pressure.GetIncomingDPS()  return Pressure.dps_in  end
 function Pressure.GetIncomingHPS()  return Pressure.hps_in  end
@@ -138,6 +154,50 @@ local function push(now, category, amount)
     e[1] = now
     e[2] = category
     e[3] = amount
+end
+
+----------------------------------------------------------------
+-- HP sample buffer (for the displayed TTD)
+----------------------------------------------------------------
+
+local hpBuffer = {}
+for i = 1, HP_BUFFER_SIZE do hpBuffer[i] = { 0, 0 } end  -- {time, hp}
+local hpHead = 0
+
+local function pushHpSample(now, hp)
+    hpHead = (hpHead % HP_BUFFER_SIZE) + 1
+    local s = hpBuffer[hpHead]
+    s[1] = now
+    s[2] = hp
+end
+
+-- Rolling-peak HP-delta TTD. Walks the sample buffer for entries within
+-- HP_WINDOW seconds, finds the highest HP and its earliest timestamp
+-- (the "peak"), and computes the rate of HP loss from that peak to now.
+-- Returns nil when the player isn't net-losing HP (peak == now or HP rose
+-- above prior peak — implicit heal handling).
+local function computeTTDDisplay(now, hpNow)
+    if not hpNow or hpNow <= 0 then return nil end
+    local cutoff = now - HP_WINDOW
+    local peakHp, peakTime = hpNow, now
+    for i = 1, HP_BUFFER_SIZE do
+        local s = hpBuffer[i]
+        if s[1] >= cutoff then
+            -- Strict > so the peakTime stays at the EARLIEST occurrence of
+            -- the peak — gives the longest elapsed for the rate, which is
+            -- the most stable estimate.
+            if s[2] > peakHp then
+                peakHp = s[2]
+                peakTime = s[1]
+            end
+        end
+    end
+    local hpLost = peakHp - hpNow
+    local elapsed = now - peakTime
+    if hpLost <= 0 or elapsed < HP_MIN_ELAPSED then
+        return nil
+    end
+    return hpNow * elapsed / hpLost
 end
 
 ----------------------------------------------------------------
@@ -421,29 +481,25 @@ local function recompute()
     -- five-tier hybrid drain+TTD logic.
     transition(deriveRawState())
 
-    -- TTD smoothing for the visible readout. Pressure.ttd is whatever
-    -- deriveRawState just produced (raw, jumpy as the 4s window
-    -- shifts); ttd_smoothed is what the user reads.
-    if Pressure.ttd then
-        if Pressure.ttd_smoothed then
-            Pressure.ttd_smoothed = TTD_SMOOTH_ALPHA * Pressure.ttd
-                + (1 - TTD_SMOOTH_ALPHA) * Pressure.ttd_smoothed
-        else
-            Pressure.ttd_smoothed = Pressure.ttd
-        end
-    else
-        Pressure.ttd_smoothed = nil
-    end
+    -- TTD displayed to the user: HP-delta with rolling peak. Sample current
+    -- HP into the ring buffer, then compute the rate from the most recent
+    -- peak. Independent from Pressure.ttd (which is event-based and feeds
+    -- the state machine) — the displayed number measures HP directly so it
+    -- is robust to combat-log gaps and naturally folds heals into the rate
+    -- calculation (a heal pushes the peak forward, restarting the slope).
+    local hpNow = UnitHealth("player") or 0
+    pushHpSample(now, hpNow)
+    Pressure.ttd_display = computeTTDDisplay(now, hpNow)
 
     -- Push state to every health widget across all blocks. The widget
     -- module attaches a SetPressure method to each frame at Build time
-    -- (see Widgets/HealthBar.lua). Display the smoothed TTD.
+    -- (see Widgets/HealthBar.lua).
     if ns.BlockManager and ns.BlockManager.GetWidgetsByType then
         local frames = ns.BlockManager.GetWidgetsByType("health")
         for i = 1, #frames do
             local f = frames[i]
             if f.SetPressure then
-                f:SetPressure(Pressure.state, Pressure.ttd_smoothed)
+                f:SetPressure(Pressure.state, Pressure.ttd_display)
             end
         end
     end
@@ -466,9 +522,9 @@ local function printDebug()
         local mx = UnitHealthMax("player") or 1
         if mx >= 1 then drain = (netLoss / mx) * 100 end
     end
-    print(("|cff1ED760Aegis|r pressure: state=%s ttd=%s (raw %s) drain=%.2f%%/s [%s]"):format(
+    print(("|cff1ED760Aegis|r pressure: state=%s ttd_disp=%s (state %s) drain=%.2f%%/s [%s]"):format(
         Pressure.state,
-        Pressure.ttd_smoothed and ("%.1fs"):format(Pressure.ttd_smoothed) or "nil",
+        Pressure.ttd_display and ("%.1fs"):format(Pressure.ttd_display) or "nil",
         Pressure.ttd and ("%.1fs"):format(Pressure.ttd) or "nil",
         drain,
         combatStatusLabel()))

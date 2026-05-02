@@ -11,6 +11,17 @@ ns.Block.__class = Block
 
 local DEFAULT_WIDGET_GAP = 4  -- fallback when config.gap is missing (pre-v8 data)
 
+-- Frame center expressed as offset from UIParent's center, in UIParent's
+-- coordinate space. Stable regardless of which anchor StartMoving rewrote
+-- the frame to (WoW's StartMoving converts the anchor to TOPLEFT-relative
+-- internally, which makes GetPoint return weird coordinates mid-drag).
+local function liveCenterOffset(frame)
+    local fx, fy = frame:GetCenter()
+    local px, py = UIParent:GetCenter()
+    if not (fx and px) then return 0, 0 end
+    return fx - px, fy - py
+end
+
 local function makePixel(parent, layer)
     local t = parent:CreateTexture(nil, layer or "OVERLAY")
     t:SetTexture(ns.Theme.backgroundTexture)
@@ -45,8 +56,32 @@ local function buildEdgeMarker(frame)
     rgt:SetPoint("BOTTOMRIGHT", edge, "BOTTOMRIGHT", 0, 0)
     rgt:SetWidth(1)
 
+    -- Position read-out: shown at the block's top-left while unlocked, so
+    -- the user can see the live anchor + offset of each block as they drag.
+    -- Anchored just OUTSIDE the edge (BOTTOMLEFT-of-label = TOPLEFT-of-edge)
+    -- so it does not overlap the bar contents inside the block.
+    local pos = edge:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    pos:SetPoint("BOTTOMLEFT", edge, "TOPLEFT", 0, 2)
+    pos:SetJustifyH("LEFT")
+    pos:SetTextColor(color[1], color[2], color[3], 1)
+    edge.posLabel = pos
+
     edge:Hide()
     return edge
+end
+
+-- Read the block's current screen position and write it to the edge
+-- marker's read-out. Always reads as "offset from UIParent CENTER" so the
+-- value is stable regardless of which anchor StartMoving has set internally.
+-- Called on lock/unlock, on drag start/stop, and via OnUpdate while a drag
+-- is active so the number is live as you move.
+local function updatePosLabel(block)
+    if not (block and block.edge and block.edge.posLabel and block.frame) then
+        return
+    end
+    local x, y = liveCenterOffset(block.frame)
+    block.edge.posLabel:SetText(("CENTER %+d, %+d"):format(
+        math.floor(x + 0.5), math.floor(y + 0.5)))
 end
 
 function ns.Block.New(config)
@@ -72,13 +107,18 @@ end
 
 function Block:savePosition()
     if not self.frame then return end
-    local point, _, relativePoint, xOffset, yOffset = self.frame:GetPoint(1)
+    -- Re-anchor to CENTER/CENTER with the live screen offset. This undoes
+    -- the TOPLEFT anchor that StartMoving wrote during drag, so the saved
+    -- position reads as the natural "offset from screen center" — useful
+    -- for mirroring blocks left/right around the player.
+    local x, y = liveCenterOffset(self.frame)
     self.config.position = {
-        point = point or "CENTER",
-        relativePoint = relativePoint or "CENTER",
-        xOffset = xOffset or 0,
-        yOffset = yOffset or 0,
+        point         = "CENTER",
+        relativePoint = "CENTER",
+        xOffset       = math.floor(x + 0.5),
+        yOffset       = math.floor(y + 0.5),
     }
+    self:applyPosition()
 end
 
 function Block:teardownWidgets()
@@ -114,6 +154,13 @@ function Block:Layout()
     local orientation = self.config.orientation or "horizontal"
     local style = self.config.style or "standard"
     local gap = self.config.gap or DEFAULT_WIDGET_GAP
+    -- `curve` is meaningful only for vertical blocks (tall bars side-by-side).
+    -- Values: "none" (rectangular, default), "left" (silhouette `(`), "right"
+    -- (silhouette `)`). Horizontal blocks ignore it — the textures we ship
+    -- are designed for vertical bars and rotating them would require a
+    -- second texture set + a perpendicular fill direction.
+    local curve = self.config.curve or "none"
+    if orientation ~= "vertical" then curve = "none" end
 
     local xCursor, yCursor = 0, 0
     local maxW, maxH = 0, 0
@@ -126,7 +173,7 @@ function Block:Layout()
     for _, widgetId in ipairs(self.config.widgets or {}) do
         local widget = ns.WidgetCatalog and ns.WidgetCatalog[widgetId]
         if widget and widget.IsAvailable() then
-            local frame, w, h = widget.Build(self.frame, orientation, style)
+            local frame, w, h = widget.Build(self.frame, orientation, style, curve)
             frame:ClearAllPoints()
             if orientation == "vertical" then
                 local isText = (widget.kind == "text")
@@ -196,14 +243,21 @@ function Block:Build()
     self.frame:SetScript("OnDragStart", function(self_)
         if AegisDBChar and AegisDBChar.locked then return end
         self_:StartMoving()
+        -- Live-update the position label every frame while the user drags.
+        -- StartMoving repositions the frame on each render tick; we just
+        -- read the current anchor with GetPoint and rewrite the text.
+        self_:SetScript("OnUpdate", function() updatePosLabel(block) end)
     end)
     self.frame:SetScript("OnDragStop", function(self_)
         self_:StopMovingOrSizing()
+        self_:SetScript("OnUpdate", nil)
         block:savePosition()
+        updatePosLabel(block)  -- final value after StopMovingOrSizing
     end)
 
     self:Layout()
     self:applyPosition()
+    updatePosLabel(self)
 end
 
 function Block:SetLocked(locked)
@@ -212,7 +266,12 @@ function Block:SetLocked(locked)
     self.frame:EnableMouse(unlocked)
     self.frame:SetMovable(unlocked)
     if self.edge then
-        if unlocked then self.edge:Show() else self.edge:Hide() end
+        if unlocked then
+            updatePosLabel(self)  -- refresh before showing
+            self.edge:Show()
+        else
+            self.edge:Hide()
+        end
     end
 end
 
