@@ -26,3 +26,9 @@ desktop.ini
 # Editor backups
 *.bak
 *~
+
+SPEC.md
+
+# Throwaway test addon used during the curved-bar texture work — kept
+# locally as a probe but not part of the published addon.
+AegisBarTest/
